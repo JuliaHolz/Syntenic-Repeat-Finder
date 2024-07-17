@@ -1,0 +1,4 @@
+inputs/
+outputs/
+.snakemake/
+makedb.log
