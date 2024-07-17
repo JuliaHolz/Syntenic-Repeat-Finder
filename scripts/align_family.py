@@ -14,6 +14,8 @@ parser.add_argument('-o', '--output', action="store", help = "location where out
 parser.add_argument('-f', '--family', action="store", help = "family name")
 
 args = parser.parse_args()
+target_genome_name = (args.targetgenome.split("/")[-1]).split(".")[0]
+query_genome_name = (args.querygenome.split("/")[-1]).split(".")[0]
 start_fasta = time.time()
 #get fasta files for the bed
 print("converting target repeats to fasta")
@@ -23,79 +25,48 @@ query_output_file = args.output + "/mapped_fasta/" + args.family + ".fasta"
 print("converting query repeats to fasta")
 subprocess.run(["bedtools", "getfasta", "-fi", args.querygenome, "-bed", args.mapped, "-fo", query_output_file, "-name"])
 end_fasta = time.time()
+alignment_output_file = args.output + "/alignments/" + args.family + "/alignments.caf"
 
-with open(args.output + "/alignments/" + args.family + "/alignment_summary.txt", "a") as outfile:
+with open(args.output + "/alignments/" + args.family + "/alignment_summary.txt", "w") as outfile:
     outfile.write("created fasta from bed in: " + str(end_fasta-start_fasta) + " seconds \n")
 
-subprocess.run(["mkdir", "-p", args.output + "/alignments/" + args.family])
-target_repeat_folder =  args.output + "/alignments/" + args.family + "/target_repeats/"
-subprocess.run(["mkdir", "-p", target_repeat_folder])
-query_repeat_folder = args.output + "/alignments/" + args.family + "/query_repeats/"
-subprocess.run(["mkdir", "-p",query_repeat_folder])
-aligned_output_folder = args.output + "/alignments/" + args.family + "/aligned/"
-subprocess.run(["mkdir", "-p", aligned_output_folder])
 
-repeat_names = []
-start_split = time.time()
-print("splitting target repeats fasta file into individual fastas")
-f=open(target_output_file,"r")
-opened = False
-for line in f :
-    if(line[0] == ">") :
-        if(opened):
-            of.close()
-        opened = True
-        filename = (line[1:].split(":")[0].rstrip())
-        filename = filename.replace("/", "%")
-        filename = filename.replace(";", "#")
-        filename = filename.replace("(", "@")
-        filename = filename.replace(")", "@")
-        line = ">" + filename + "\n"
-        repeat_names.append(filename)
-        of=open(target_repeat_folder + "%s.fa" % filename, "w")
-    of.write(line)
-of.close()
-
-print("splitting query repeats fasta file into individual fastas")
-f=open(query_output_file,"r")
-opened = False
-for line in f :
-    if(line[0] == ">") :
-        if(opened):
-            of.close()
-        opened = True
-        filename = (line[1:].split(":")[0].rstrip())
-        filename = filename.replace("/", "%")
-        filename = filename.replace(";", "#")
-        filename = filename.replace("(", "@")
-        filename = filename.replace(")", "@")
-        line = ">" + filename + "\n"
-        of=open(query_repeat_folder + "%s.fa" % filename, "w")
-    of.write(line)
-of.close()
-end_split = time.time()
-with open(args.output + "/alignments/" + args.family + "/alignment_summary.txt", "a") as outfile:
-    outfile.write("split fastas into individual repeats in: " + str(end_split-start_split) + " seconds \n")
 start_align = time.time()
 print("aligning repeats")
-count = 0
-for repeatName in repeat_names:
-    target_fasta = target_repeat_folder + "%s.fa" % repeatName
-    query_fasta = query_repeat_folder + "%s.fa" % repeatName
-    output_location = aligned_output_folder + repeatName + ".txt"
-    with open(output_location, "w") as outfile:
-        proc = subprocess.run( ["/usr/local/RepeatModeler/util/align.pl", "-force", "-crossmatch", "-a", target_fasta, query_fasta], stdout=outfile)
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.nhr"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.nin"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.njs"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.nog"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.nos"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.not"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.nsq"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.ntf"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.nto"])
-        #subprocess.run( ["rm",  args.output + "/alignments/" + args.family + "/query_repeats/"+repeatName+".fa.ndb"])
-#create the summary file
+target_file =open(target_output_file,"r")
+query_file =open(query_file,"r")
+alignment_file = open(alignment_output_file, "w")
+
+opened = False
+for target_line in target_file:
+    query_line = query_file.readline()
+    if(target_line[0] == ">") :
+        if(opened):
+            target_temp.close()
+            query_temp.close()
+            subprocess.run( ["/usr/local/RepeatModeler/util/align.pl", "-force", "-crossmatch", "-caf", target_fasta, query_fasta], stdout=alignment_file)
+            subprocess.run( ["rm", target_temp.name])
+            subprocess.run( ["rm", query_temp.name])
+        opened = True
+        filename = (target_line[1:].rstrip())
+        query_filename = (query_line[1:].rstrip())
+        if(query_filename != filename):
+            raise Exception("mismatch between target and query entry names {} and {}".format(filename,query_filename))
+        filename = filename.replace("/", "%")
+        filename = filename.replace(";", "#")
+        filename = filename.replace("(", "@")
+        filename = filename.replace(")", "@")
+        target_line = ">" + target_genome_name + ":" + filename.split(":")[0] + "\n"
+        query_line = ">" + target_genome_name + ":" + filename.split(":")[0] + "\n"
+        target_temp=open(args.output + "/" + target_genome_name + "%s.fa" % filename, "w")
+        query_temp=open(args.output + "/" + query_genome_name + "%s.fa" % filename, "w")
+    target_temp.write(target_line)
+target_temp.close()
+query_temp.close()
+subprocess.run( ["rm", target_temp.name])
+subprocess.run( ["rm", query_temp.name])
+alignment_file.close()
+
 end_align = time.time()
 
 with open(args.output + "/alignments/" + args.family + "/alignment_summary.txt", "a") as outfile:
