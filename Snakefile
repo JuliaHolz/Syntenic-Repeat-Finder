@@ -17,7 +17,7 @@ rule repeatmasker_output_to_bed:
 rule filter_simple_repeats_and_low_complexity:
     input: "outputs/{filename}.bed"
     output: "outputs/nosimple_{filename}.bed"
-    shell: "awk -F'[;\\t]'  '{{ if(($5 != \"Simple_repeat\") &&($5 != \"Low_complexity\")) print }}' {input} > {output}"
+    shell: "awk -F'[;\\t]'  '{{ if(($5 != \"Simple_repeat\") &&($5 != \"Low_complexity\")  &&($5 != \"Satellite\")) print }}' {input} > {output}"
 
 
 rule sort_bed:

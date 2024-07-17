@@ -48,6 +48,8 @@ for line in f :
         filename = (line[1:].split(":")[0].rstrip())
         filename = filename.replace("/", "%")
         filename = filename.replace(";", "#")
+        filename = filename.replace("(", "@")
+        filename = filename.replace(")", "@")
         line = ">" + filename + "\n"
         repeat_names.append(filename)
         of=open(target_repeat_folder + "%s.fa" % filename, "w")
@@ -65,6 +67,8 @@ for line in f :
         filename = (line[1:].split(":")[0].rstrip())
         filename = filename.replace("/", "%")
         filename = filename.replace(";", "#")
+        filename = filename.replace("(", "@")
+        filename = filename.replace(")", "@")
         line = ">" + filename + "\n"
         of=open(query_repeat_folder + "%s.fa" % filename, "w")
     of.write(line)
