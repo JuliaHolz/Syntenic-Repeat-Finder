@@ -26,31 +26,36 @@ print("converting query repeats to fasta")
 subprocess.run(["bedtools", "getfasta", "-fi", args.querygenome, "-bed", args.mapped, "-fo", query_output_file, "-name"])
 end_fasta = time.time()
 alignment_output_file = args.output + "/alignments/" + args.family + "/alignments.caf"
+error_file_name = args.output + "/alignments/" + args.family + "/errors.txt"
 
 with open(args.output + "/alignments/" + args.family + "/alignment_summary.txt", "w") as outfile:
     outfile.write("created fasta from bed in: " + str(end_fasta-start_fasta) + " seconds \n")
 
-
+num_repeats = 0
 start_align = time.time()
 print("aligning repeats")
 target_file =open(target_output_file,"r")
-query_file =open(query_file,"r")
+query_file =open(query_output_file,"r")
 alignment_file = open(alignment_output_file, "w")
-
+error_file = open(error_file_name, "w")
 opened = False
 for target_line in target_file:
     query_line = query_file.readline()
     if(target_line[0] == ">") :
+        num_repeats +=1
         if(opened):
+            log_file_name = args.output + "/" + target_genome_name + "%s.fa.log" % filename
             target_temp.close()
             query_temp.close()
-            subprocess.run( ["/usr/local/RepeatModeler/util/align.pl", "-force", "-crossmatch", "-caf", target_fasta, query_fasta], stdout=alignment_file)
-            subprocess.run( ["rm", target_temp.name])
-            subprocess.run( ["rm", query_temp.name])
+            subprocess.run( ["/usr/local/RepeatModeler/util/align.pl", "-force", "-crossmatch", "-caf", target_filename, query_filename], stdout=alignment_file, stderr=error_file)
+            subprocess.run( ["rm", "-f", target_temp.name])
+            subprocess.run( ["rm", "-f", query_temp.name])
+            subprocess.run( ["rm", "-f", log_file_name])
+
         opened = True
         filename = (target_line[1:].rstrip())
         query_filename = (query_line[1:].rstrip())
-        if(query_filename != filename):
+        if(query_filename.split(":")[0] != filename.split(":")[0]):
             raise Exception("mismatch between target and query entry names {} and {}".format(filename,query_filename))
         filename = filename.replace("/", "%")
         filename = filename.replace(";", "#")
@@ -58,11 +63,22 @@ for target_line in target_file:
         filename = filename.replace(")", "@")
         target_line = ">" + target_genome_name + ":" + filename.split(":")[0] + "\n"
         query_line = ">" + target_genome_name + ":" + filename.split(":")[0] + "\n"
-        target_temp=open(args.output + "/" + target_genome_name + "%s.fa" % filename, "w")
-        query_temp=open(args.output + "/" + query_genome_name + "%s.fa" % filename, "w")
+        target_filename = args.output + "/" + target_genome_name + "%s.fa" % filename
+        query_filename = args.output + "/" + query_genome_name + "%s.fa" % filename
+        target_temp=open(target_filename, "w")
+        query_temp=open(query_filename, "w")
     target_temp.write(target_line)
+    query_temp.write(query_line)
+    
+log_file_name = args.output + "/" + target_genome_name + "%s.fa.log" % filename
 target_temp.close()
 query_temp.close()
+subprocess.run( ["/usr/local/RepeatModeler/util/align.pl", "-force", "-crossmatch", "-caf", target_filename, query_filename], stdout=alignment_file, stderr=error_file)
+subprocess.run( ["rm", "-f", target_temp.name])
+subprocess.run( ["rm", "-f", query_temp.name])
+subprocess.run( ["rm", "-f", log_file_name])
+
+error_file.close()
 subprocess.run( ["rm", target_temp.name])
 subprocess.run( ["rm", query_temp.name])
 alignment_file.close()
@@ -70,4 +86,4 @@ alignment_file.close()
 end_align = time.time()
 
 with open(args.output + "/alignments/" + args.family + "/alignment_summary.txt", "a") as outfile:
-    outfile.write("aligned " +  str(len(repeat_names)) +  " repeats in " + str(end_align-start_align) + " seconds \n")
+    outfile.write("aligned " +  str(num_repeats) +  " repeats in " + str(end_align-start_align) + " seconds \n")

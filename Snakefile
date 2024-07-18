@@ -3,7 +3,8 @@ wildcard_constraints:
     genome = "hg38",
     filterdist = "[\\d]+",
     bp = "[\\d]+",
-    speciespair = "[^_]*"
+    target = "[^_]*",
+    query = "[^_]*"
 
 rule repeatmasker_output_to_bed:
     input: 
@@ -81,20 +82,20 @@ rule remove_last_6_cols_of_bed:
 
 rule lift_repeats:
     input:
-        chain = "inputs/{speciespair}.chain",
-        repeats = "outputs/{repeatfile}.bed"
+        chain = "inputs/{target}_{query}.chain",
+        repeats = "outputs/6_f{filterdist}_{target}_e{bp}.bed"
     output: 
-        mapped = "outputs/mapped_{repeatfile}_{speciespair}.bed",
-        unmapped = "outputs/unmapped_{repeatfile}_{speciespair}.bed"
+        mapped = "outputs/mapped_6_f{filterdist}_{target}_e{bp}_{query}.bed",
+        unmapped = "outputs/unmapped_6_f{filterdist}_{target}_e{bp}_{query}.bed"
     conda: "envs/pybedtools.yml"
     shell: "/usr/local/ucscTools/liftOver {input.repeats} {input.chain} {output.mapped} {output.unmapped}"
 
 #gets a bed file of only the repeats that mapped over in human
 rule get_corresponding_unmapped_repeats:
     input:
-        mapped_repeats = "outputs/mapped_{repeatfile}_{speciespair}.bed",
-        original_repeats = "outputs/{repeatfile}.bed"
-    output: "outputs/orig_corresponding_to_mapped_{repeatfile}_{speciespair}.bed"
+        mapped_repeats = "outputs/mapped_6_f{filterdist}_{target}_e{bp}_{query}.bed",
+        original_repeats = "outputs/6_f{filterdist}_{target}_e{bp}.bed"
+    output: "outputs/orig_corresponding_to_mapped_6_f{filterdist}_{target}_e{bp}_{query}.bed"
     shell: "awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.mapped_repeats} {input.original_repeats} > {output}"
 
 
@@ -103,37 +104,37 @@ rule get_corresponding_unmapped_repeats:
 #split the files into beds by family, note, we use gensub to replace any / in family names with % so we can use them as file names
 checkpoint split_file_by_families:
     input: 
-        mapped_repeats = "outputs/mapped_{repeatfile}_{speciespair}.bed",
-        corresponding_repeats = "outputs/orig_corresponding_to_mapped_{repeatfile}_{speciespair}.bed"
-    output: "outputs/{repeatfile}_{speciespair}/family_summary.txt"
+        mapped_repeats = "outputs/mapped_{repeatfile}.bed",
+        corresponding_repeats = "outputs/orig_corresponding_to_mapped_{repeatfile}.bed"
+    output: "outputs/{repeatfile}/family_summary.txt"
     run:
-        shell("mkdir -p outputs/{wildcards.repeatfile}_{wildcards.speciespair}")
-        shell("mkdir -p outputs/{wildcards.repeatfile}_{wildcards.speciespair}/mapped_beds")
-        shell("mkdir -p outputs/{wildcards.repeatfile}_{wildcards.speciespair}/original_beds")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/{wildcards.repeatfile}_{wildcards.speciespair}/mapped_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/{wildcards.repeatfile}_{wildcards.speciespair}/original_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.corresponding_repeats}")
+        shell("mkdir -p outputs/{wildcards.repeatfile}")
+        shell("mkdir -p outputs/{wildcards.repeatfile}/mapped_beds")
+        shell("mkdir -p outputs/{wildcards.repeatfile}/original_beds")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/{wildcards.repeatfile}/mapped_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/{wildcards.repeatfile}/original_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.corresponding_repeats}")
         shell("awk -F '[\\t;]' '{{print $4}}' {input.mapped_repeats} | sort | uniq -c > {output}")
-        shell("mkdir -p outputs/{wildcards.repeatfile}_{wildcards.speciespair}/alignments")
-        shell("mkdir -p outputs/{wildcards.repeatfile}_{wildcards.speciespair}/original_fasta")
-        shell("mkdir -p outputs/{wildcards.repeatfile}_{wildcards.speciespair}/mapped_fasta")
+        shell("mkdir -p outputs/{wildcards.repeatfile}/alignments")
+        shell("mkdir -p outputs/{wildcards.repeatfile}/original_fasta")
+        shell("mkdir -p outputs/{wildcards.repeatfile}/mapped_fasta")
 
 
 
 #NEED TO ADD A WAY TO GET CHIMP GENOME IN HERE WITHOUT HARD CODING IT IN
 rule align_family:
     input: 
-        mapped_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{speciespair}_{query}/mapped_beds/{family}.bed", 
-        original_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{speciespair}/original_beds/{family}.bed",
+        mapped_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/mapped_beds/{family}.bed", 
+        original_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_beds/{family}.bed",
         target_genome = "inputs/{target}.fna",
-        query_genome = "inputs/pantro.fna", #need to make this come from speciespair tag or something,
+        query_genome = "inputs/{query}.fna", #need to make this come from speciespair tag or something,
         script = "scripts/align_family.py"
     output: 
-        mapped_fasta = "outputs/6_f{filterdist}_{target}_e{bp}_{speciespair}/mapped_fasta/{family}.fasta",
-        original_fasta = "outputs/6_f{filterdist}_{target}_e{bp}_{speciespair}/original_fasta/{family}.fasta",
-        summary = "outputs/6_f{filterdist}_{target}_e{bp}_{speciespair}/alignments/{family}/alignment_summary.txt"
+        mapped_fasta = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/mapped_fasta/{family}.fasta",
+        original_fasta = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_fasta/{family}.fasta",
+        summary = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/alignment_summary.txt"
     threads: 1
     conda: "envs/pybedtools.yml"
-    shell: """python {input.script} -i {input.original_bed} -m {input.mapped_bed} -t {input.target_genome} -q {input.query_genome} -o outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.speciespair} -f {wildcards.family}"""
+    shell: """python {input.script} -i {input.original_bed} -m {input.mapped_bed} -t {input.target_genome} -q {input.query_genome} -o outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query} -f {wildcards.family}"""
 
 
 def aggregate_families(wildcards):
@@ -148,5 +149,5 @@ def aggregate_families(wildcards):
 rule align_all_families:
     input: 
         aggregate_families
-    output: "outputs/{repeatfile}_{speciespair}/all_alignment_summary.txt"
+    output: "outputs/{repeatfile}/all_alignment_summary.txt"
     shell: "ls -1 ./*/aligned | wc -l > {output}"
