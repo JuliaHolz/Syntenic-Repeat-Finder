@@ -18,7 +18,7 @@ rule repeatmasker_output_to_bed:
 rule filter_simple_repeats_and_low_complexity:
     input: "outputs/{filename}.bed"
     output: "outputs/nosimple_{filename}.bed"
-    shell: "awk -F'[;\\t]'  '{{ if(($5 != \"Simple_repeat\") &&($5 != \"Low_complexity\")  &&($5 != \"Satellite\")) print }}' {input} > {output}"
+    shell: "awk -F'[;\\t]'  '{{ if(($5 !~ /Simple_repeat.*/) &&($5 !~ /Low_complexity.*/)  &&($5 !~ /Satellite.*/)) print }}' {input} > {output}"
 
 
 rule sort_bed:
@@ -120,13 +120,12 @@ checkpoint split_file_by_families:
 
 
 
-#NEED TO ADD A WAY TO GET CHIMP GENOME IN HERE WITHOUT HARD CODING IT IN
 rule align_family:
     input: 
         mapped_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/mapped_beds/{family}.bed", 
         original_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_beds/{family}.bed",
         target_genome = "inputs/{target}.fna",
-        query_genome = "inputs/{query}.fna", #need to make this come from speciespair tag or something,
+        query_genome = "inputs/{query}.fna", 
         script = "scripts/align_family.py"
     output: 
         mapped_fasta = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/mapped_fasta/{family}.fasta",
@@ -151,3 +150,31 @@ rule align_all_families:
         aggregate_families
     output: "outputs/{repeatfile}/all_alignment_summary.txt"
     shell: "ls -1 ./*/aligned | wc -l > {output}"
+
+rule original_interval_bed_per_family:
+    input:
+        original_bed = "outputs/f{filterdist}_{target}.bed",
+        subset_bed = "outputs/mapped_6_f{filterdist}_{target}_e{bp}_{query}.bed"
+    output: "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_intervals_corresponding_to_expanded.bed"
+    run:
+        shell("mkdir -p outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/nonexpanded_original_beds")
+        shell("awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.subset_bed} {input.original_bed} > {output}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/nonexpanded_original_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {output}")
+
+
+
+
+#remove the 7_19_ once I rerun the rest of the pipeline
+rule parse_family_caf:
+    input:
+        script = "scripts/parse_family_caf.py",
+        original_beds_done = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_intervals_corresponding_to_expanded.bed",
+        family_original_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/nonexpanded_original_beds/{family}.bed",
+        family_expanded_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_beds/{family}.bed",
+        family_caf = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/alignments.caf"
+    output:
+        family_table = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/repeat_alignment_coverage.csv"
+    conda: "envs/pybedtools.yml"
+    shell: "python {input.script} -c {input.family_caf} -r {input.family_original_bed} -e {input.family_expanded_bed} -o {output}"
+
+

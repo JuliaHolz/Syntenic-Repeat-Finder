@@ -61,10 +61,14 @@ for target_line in target_file:
         filename = filename.replace(";", "#")
         filename = filename.replace("(", "@")
         filename = filename.replace(")", "@")
+        query_filename = query_filename.replace("/", "%")
+        query_filename = query_filename.replace(";", "#")
+        query_filename = query_filename.replace("(", "@")
+        query_filename = query_filename.replace(")", "@")
         target_line = ">" + target_genome_name + ":" + filename.split(":")[0] + "\n"
-        query_line = ">" + target_genome_name + ":" + filename.split(":")[0] + "\n"
+        query_line = ">" + query_genome_name + ":" + filename.split(":")[0] + "\n"
         target_filename = args.output + "/" + target_genome_name + "%s.fa" % filename
-        query_filename = args.output + "/" + query_genome_name + "%s.fa" % filename
+        query_filename = args.output + "/" + query_genome_name + "%s.fa" % query_filename
         target_temp=open(target_filename, "w")
         query_temp=open(query_filename, "w")
     target_temp.write(target_line)
@@ -79,8 +83,7 @@ subprocess.run( ["rm", "-f", query_temp.name])
 subprocess.run( ["rm", "-f", log_file_name])
 
 error_file.close()
-subprocess.run( ["rm", target_temp.name])
-subprocess.run( ["rm", query_temp.name])
+
 alignment_file.close()
 
 end_align = time.time()
