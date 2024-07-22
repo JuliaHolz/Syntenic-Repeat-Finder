@@ -70,9 +70,11 @@ def get_csv_line(coverage, repeat_bedline, expanded_bedline):
     id = repeat_bedline.name.replace(",", "#")
     return id+","+ get_section_stat_string(left_flanking_coverage) + "," + get_section_stat_string(repeat_coverage) + "," + get_section_stat_string(right_flanking_coverage) + "\n"
 
-    
 
 
+#process alignments computes coverage for the repeat and surrounding area
+#if a base is matched in any alignment it is considered matched, the next priority is mismatch, then deleted, 
+#and a base will only be considered unaligned if it is unaligned in all alignments
 def processAlignments(repeat_id, alignment_list, repeat_bedline, expanded_bedline):
     print("PROCESS:", repeat_id)
     left_flanking_to_cover = repeat_bedline.start - expanded_bedline.start
@@ -90,8 +92,9 @@ def processAlignments(repeat_id, alignment_list, repeat_bedline, expanded_bedlin
                 if(alignment_string[char_idx] == '-'): #end the indel
                     in_qdeleted = False 
                 elif(isACTG(alignment_string[char_idx])):
-                    #this is a nucleotide that is deleted in the query 
-                    coverage[coverage_idx] = Column.deleted
+                    #this is a nucleotide that is deleted in the query -- only change if unaligned - mismatch and match are higher "ranking" 
+                    if(coverage[coverage_idx] == Column.unaligned):
+                        coverage[coverage_idx] = Column.deleted
                     coverage_idx +=1
                 else:
                     raise Exception("Invalid character in deletion section: " + str(alignment_string[char_idx]))
@@ -109,7 +112,8 @@ def processAlignments(repeat_id, alignment_list, repeat_bedline, expanded_bedlin
                 #mismatch should be two non-special chars
                 assert(char_idx>0 and char_idx+1<len(alignment_string) and isACTG(alignment_string[char_idx-1]) and isACTG(alignment_string[char_idx+1]))
             elif (char_idx+1 < len(alignment_string)) and alignment_string[char_idx+1] == '/':
-                coverage[coverage_idx] = Column.mismatch
+                if(coverage[coverage_idx] != Column.match): #anything other than match is lower "rank" than mismatch
+                    coverage[coverage_idx] = Column.mismatch
                 coverage_idx +=1
             elif (char_idx> 0) and alignment_string[char_idx-1] == '/':
                 pass #we already dealt with mismatch when we encountered the first char of it
@@ -143,14 +147,6 @@ with open(args.caf, "r") as caf_file,open(args.output, "w") as outfile:
                 repeat_id_tuple= (split_bedline[2], split_bedline[3])
                 expanded_id_tuple =  (expanded_bedline.name.split(";")[2], expanded_bedline.name.split(";")[3])
                 alignment_id_tuple = (matched.group("rmid"), matched.group("bedline"))
-                if  (not repeat_id_tuple==expanded_id_tuple) or (not repeat_id_tuple==alignment_id_tuple):
-                    print("ACK!!!!!")
-                    print(repeat_id_tuple)
-                    print(expanded_id_tuple)
-                    print(alignment_id_tuple)
-                    print("WHACK")
-
-
                 assert(repeat_id_tuple==expanded_id_tuple)
                 assert(repeat_id_tuple==alignment_id_tuple)
                 #create id for putting in file 
@@ -164,6 +160,8 @@ with open(args.caf, "r") as caf_file,open(args.output, "w") as outfile:
                 num_alignments_expected = int(matched.group("num")) 
                 num_expected_found = True
                 num_alignments_found = 0
+                if num_alignments_expected == 0: #need to deal with no alignment case because it will never go to the num_alignments_found < num_alignments_expected case
+                    processAlignments(repeat_id, [], repeat_bedline,expanded_bedline) #empty alignment list will give us coverage array that's all unaligned
         elif num_alignments_found < num_alignments_expected:
             matched = alignment_line_regex.match(line)
             if matched != None:
