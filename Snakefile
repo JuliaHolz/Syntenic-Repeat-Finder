@@ -149,17 +149,18 @@ rule align_all_families:
     input: 
         aggregate_families
     output: "outputs/{repeatfile}/all_alignment_summary.txt"
-    shell: "ls -1 ./*/aligned | wc -l > {output}"
+    shell: "cat ./outputs/{wildcards.repeatfile}/alignments/*/alignment_summary.txt > {output}"
 
-rule original_interval_bed_per_family:
+checkpoint original_interval_bed_per_family:
     input:
         original_bed = "outputs/f{filterdist}_{target}.bed",
         subset_bed = "outputs/mapped_6_f{filterdist}_{target}_e{bp}_{query}.bed"
-    output: "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_intervals_corresponding_to_expanded.bed"
+    output: 
+        all_original = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_intervals_corresponding_to_expanded.bed",
     run:
         shell("mkdir -p outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/nonexpanded_original_beds")
-        shell("awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.subset_bed} {input.original_bed} > {output}")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/nonexpanded_original_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {output}")
+        shell("awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.subset_bed} {input.original_bed} > {output.all_original}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/nonexpanded_original_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {output.all_original}")
 
 
 
@@ -177,4 +178,18 @@ rule parse_family_caf:
     conda: "envs/pybedtools.yml"
     shell: "python {input.script} -c {input.family_caf} -r {input.family_original_bed} -e {input.family_expanded_bed} -o {output}"
 
+def aggregate_tsvs(wildcards):
+     checkpoint_output = checkpoints.original_interval_bed_per_family.get(**wildcards).output[0]
+     sections = checkpoint_output.split("/")
+     path = sections[0] + "/" + sections[1] + "/mapped_beds/"
+     families, = glob_wildcards(os.path.join(path, "{family}.bed"))
+     path_to_summary = sections[0] + "/" + sections[1] + "/alignments/"
+     return expand(os.path.join(path_to_summary, "{FAMILY}/repeat_alignment_coverage.csv"), FAMILY=families)
 
+
+rule parse_all_caf: 
+    input: 
+        aggregate_tsvs
+    output: "outputs/6_f{filterdist}_{target}_e{bp}_{query}/num_csv_lines_summary.txt"
+    threads: 1
+    shell: "cat ./outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/alignments/*/repeat_alignment_coverage.csv | wc -l > {output}"

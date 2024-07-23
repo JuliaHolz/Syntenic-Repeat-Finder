@@ -33,7 +33,7 @@ num_alignments_regex = re.compile(r"#  alignments    : (?P<num>\d+).*")
 #3307,1.92,0.00,0.00,hg38:Zaphod5b#DNA%hAT-Tip100#80289#95793,1,365,0,
 #hg38:Zaphod5b#DNA%hAT-Tip100#80289,95793,1,365,0,1,,,CCTGCC/TCCTCAGCAACGGCCCTGCTCCAAACCGGTGTTACAGTGATCTGATTATTGTAATTGATGACATTAGGAATAAGGAATCCACACAGAATAATACAGGTGCCTGTCAT/CGCCAGAGTGGTTTTATTCATTGTTAGAGAAGTTC/AATAAAGTTGAAAGAAAGCATCTACATGGGCTAGAACAGCAA/CAAAGCATGTTTT/CAGTCCTTTCTTAATTTGTGAATAAAATGATGAATTCCAGAAGCCTATTTTCACTGACAATTGAAATCAGCCCTGTACACCCCT/CGCACCTGCTCTCTACCCCTGGGAGTTCTGCTCTGTCTTCCAGTCTCTGCG/AGGAAGCTCCCGCCCTGGCCAGCCCTAGGCTCCC,comparison.matrix
 #sid group expression may need to change if comma is removed from sid
-alignment_line_regex =  re.compile(r"^(?P<qscore>\d+),(?P<qperc_subs>\d+.\d+),(?P<qperc_del>\d+.\d+),(?P<qperc_ins>\d+.\d+),(?P<qid>[^,]+),(?P<qstart>\d+),(?P<qend>\d+),(?P<qrem>\d+),(?P<sid>[^,]+,[\d]+),(?P<sstart>\d+),(?P<send>\d+),(?P<srem>\d+),(?P<orientation>[01]),,,(?P<alignment>[\+ACTG\/-]+),comparison\.matrix\s*")
+alignment_line_regex =  re.compile(r"^(?P<qscore>\d+),(?P<qperc_subs>\d+.\d+),(?P<qperc_del>\d+.\d+),(?P<qperc_ins>\d+.\d+),(?P<qid>[^,]+),(?P<qstart>\d+),(?P<qend>\d+),(?P<qrem>\d+),(?P<sid>[^,]+,[\d]+),(?P<sstart>\d+),(?P<send>\d+),(?P<srem>\d+),(?P<orientation>[01]),,,(?P<alignment>[^,]+),comparison\.matrix\s*")
 
 class Column(Enum):
     match = 1
@@ -53,8 +53,7 @@ def columnToChar(col:Column):
     raise Exception("invalid column " + str(col))
 
 def isACTG(char):
-    return char == 'A' or char == 'C' or char == 'T' or char == 'G'
-
+    return (char != "-" and char != "+" and char != "/" and char != ",")
 def get_section_stat_string(coverage):
     percent_mismatch = (float(coverage.count(Column.mismatch))/len(coverage)) * 100
     percent_deleted = (float(coverage.count(Column.deleted))/len(coverage)) * 100 
@@ -76,11 +75,17 @@ def get_csv_line(coverage, repeat_bedline, expanded_bedline):
 #if a base is matched in any alignment it is considered matched, the next priority is mismatch, then deleted, 
 #and a base will only be considered unaligned if it is unaligned in all alignments
 def processAlignments(repeat_id, alignment_list, repeat_bedline, expanded_bedline):
-    print("PROCESS:", repeat_id)
     left_flanking_to_cover = repeat_bedline.start - expanded_bedline.start
     right_flanking_to_cover = expanded_bedline.end - repeat_bedline.end
     coverage = [Column.unaligned for i in range(0,expanded_bedline.end-expanded_bedline.start)]
     for alignment_match in alignment_list:
+        #check that this is an alignment of the repeat to itself in the other genome
+        assert(alignment_match.group("qid").split(":")[1]==alignment_match.group("sid").split(":")[1].replace(",","#"))
+        #check that this is an alignment of the repeat we're looking for -- if this fails, our regex may be failing to match alignment lines -- possible that there are unknown (not ACTG or N characters in the original strings)
+        if not (alignment_match.group("qid").split(":")[1]==repeat_id.replace("/", "%")):
+            print(alignment_match.group("qid").split(":")[1])
+            print(repeat_id.replace("/", "%"))
+        assert(alignment_match.group("qid").split(":")[1]==repeat_id.replace("/", "%"))
         #subtract 1 because the caf indices are fully closed, one indexed
         coverage_idx = int(alignment_match.group("qstart"))-1
         alignment_string = alignment_match.group("alignment")
@@ -98,7 +103,6 @@ def processAlignments(repeat_id, alignment_list, repeat_bedline, expanded_bedlin
                     coverage_idx +=1
                 else:
                     raise Exception("Invalid character in deletion section: " + str(alignment_string[char_idx]))
-            
             elif in_insertion:
                 if(alignment_string[char_idx] == '+'): #end the insertion
                     in_insertion = False 
@@ -123,13 +127,15 @@ def processAlignments(repeat_id, alignment_list, repeat_bedline, expanded_bedlin
             else:
                 raise Exception("Invalid character:" + str(alignment_string[char_idx]) + " or malformed caf alignment string") 
         assert(coverage_idx == int(alignment_match.group("qend")))
-    try:
-        coverage_string = "".join([columnToChar(cov) for cov in coverage])
-        print(coverage_string)
-    except:
-        print(coverage)
+    #debugging - print out string representing coverage of the expanded interval
+    #try:
+    #    coverage_string = "".join([columnToChar(cov) for cov in coverage])
+    #    print(coverage_string)
+    #except:
+    #    print(coverage)
     assert(len(coverage)==expanded_bedline.end-expanded_bedline.start)
     return get_csv_line(coverage, repeat_bedline, expanded_bedline)
+
 
 target_repeat = BedTool(args.repeats)
 expanded_target_repeat = BedTool(args.expanded)
@@ -161,7 +167,11 @@ with open(args.caf, "r") as caf_file,open(args.output, "w") as outfile:
                 num_expected_found = True
                 num_alignments_found = 0
                 if num_alignments_expected == 0: #need to deal with no alignment case because it will never go to the num_alignments_found < num_alignments_expected case
-                    processAlignments(repeat_id, [], repeat_bedline,expanded_bedline) #empty alignment list will give us coverage array that's all unaligned
+                    outfile.write(processAlignments(repeat_id, [], repeat_bedline,expanded_bedline)) #empty alignment list will give us coverage array that's all unaligned
+                    id_found = False
+                    num_expected_found = False
+                    num_alignments_found = 0
+                    num_expected_found = False
         elif num_alignments_found < num_alignments_expected:
             matched = alignment_line_regex.match(line)
             if matched != None:
