@@ -169,13 +169,13 @@ checkpoint target_interval_bed_per_family:
 #remove the 7_19_ once I rerun the rest of the pipeline
 rule parse_family_caf:
     input:
-        script = "scripts/parse_family_caf.py",
-        target_beds_done = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/original_target_intervals_corresponding_to_expanded_and_mapped.bed",
-        family_target_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/nonexpanded_target_beds/{family}.bed",
-        family_expanded_bed = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/target_beds/{family}.bed",
-        family_caf = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/alignments.caf"
+        script = "scripts/pared_down_parse_family_caf.py",
+        target_beds_done = "outputs/f{filterdist}_{target}_e{bp}_{query}/original_target_intervals_corresponding_to_expanded_and_mapped.bed",
+        family_target_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}/nonexpanded_target_beds/{family}.bed",
+        family_expanded_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}/target_beds/{family}.bed",
+        family_caf = "outputs/f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/alignments.caf"
     output:
-        family_table = "outputs/6_f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/repeat_alignment_coverage.csv"
+        family_table = "outputs/f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/repeat_alignment_coverage.csv"
     conda: "envs/pybedtools.yml"
     shell: "python {input.script} -c {input.family_caf} -r {input.family_target_bed} -e {input.family_expanded_bed} -o {output}"
 
@@ -191,6 +191,6 @@ def aggregate_tsvs(wildcards):
 rule parse_all_caf: 
     input: 
         aggregate_tsvs
-    output: "outputs/6_f{filterdist}_{target}_e{bp}_{query}/num_csv_lines_summary.txt"
+    output: "outputs/f{filterdist}_{target}_e{bp}_{query}/num_csv_lines_summary.txt"
     threads: 1
-    shell: "cat ./outputs/6_f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/alignments/*/repeat_alignment_coverage.csv | wc -l > {output}"
+    shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/alignments/*/repeat_alignment_coverage.csv | wc -l > {output}"
