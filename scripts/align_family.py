@@ -10,7 +10,7 @@ parser.add_argument('-i', '--input', action="store", help = "bed file containing
 parser.add_argument('-m', '--mapped', action="store", help = "file containing the repeats mapped to the query genome")
 parser.add_argument('-t', '--targetgenome', action="store", help = "fasta file containing the target genome (which -i bed file refers to)")
 parser.add_argument('-q', '--querygenome', action="store", help = "fasta file containing the query genome (which -m bed file refers to)")
-parser.add_argument('-o', '--output', action="store", help = "location where outputs for this genome/set of repeats should be output (alignments, original_fasta and mapped_fasta directories should already exist in this location)")
+parser.add_argument('-o', '--output', action="store", help = "location where outputs for this genome/set of repeats should be output (alignments, target_fasta and query_fasta directories should already exist in this location)")
 parser.add_argument('-f', '--family', action="store", help = "family name")
 
 args = parser.parse_args()
@@ -19,9 +19,9 @@ query_genome_name = (args.querygenome.split("/")[-1]).split(".")[0]
 start_fasta = time.time()
 #get fasta files for the bed
 print("converting target repeats to fasta")
-target_output_file = args.output + "/original_fasta/" + args.family + ".fasta"
+target_output_file = args.output + "/target_fasta/" + args.family + ".fasta"
 subprocess.run(["bedtools", "getfasta", "-fi", args.targetgenome, "-bed", args.input, "-fo", target_output_file, "-name"])
-query_output_file = args.output + "/mapped_fasta/" + args.family + ".fasta"
+query_output_file = args.output + "/query_fasta/" + args.family + ".fasta"
 print("converting query repeats to fasta")
 subprocess.run(["bedtools", "getfasta", "-fi", args.querygenome, "-bed", args.mapped, "-fo", query_output_file, "-name"])
 end_fasta = time.time()
@@ -39,6 +39,16 @@ query_file =open(query_output_file,"r")
 alignment_file = open(alignment_output_file, "w")
 error_file = open(error_file_name, "w")
 opened = False
+def align_repeats(target_filename,query_filename, alignment_file):
+    alignment_result = subprocess.run( ["/usr/local/RepeatModeler/util/align.pl", "-force", "-crossmatch", "-caf", target_filename, query_filename], stdout=subprocess.PIPE, stderr=error_file)
+    alignment_lines = alignment_result.stdout.decode("utf-8").split("\n")
+    num_alignments_expected = int([line for line in alignment_lines if line[0:13] == "#  alignments"][0].split(":")[1])
+    alignments = [line for line in alignment_lines if line != '' and line[0]!="#"]
+    assert(len(alignments) == num_alignments_expected)
+    alignment_file.write(">" + str(num_alignments_expected) + " alignments for:" + filename.split(":")[0] + "\n")
+    for alignment in alignments:
+        alignment_file.write(alignment + "\n")
+
 for target_line in target_file:
     query_line = query_file.readline()
     if(target_line[0] == ">") :
@@ -47,11 +57,11 @@ for target_line in target_file:
             log_file_name = args.output + "/" + target_genome_name + "%s.fa.log" % filename
             target_temp.close()
             query_temp.close()
-            subprocess.run( ["/usr/local/RepeatModeler/util/align.pl", "-force", "-crossmatch", "-caf", target_filename, query_filename], stdout=alignment_file, stderr=error_file)
+            align_repeats(target_filename,query_filename,alignment_file)
+
             subprocess.run( ["rm", "-f", target_temp.name])
             subprocess.run( ["rm", "-f", query_temp.name])
             subprocess.run( ["rm", "-f", log_file_name])
-
         opened = True
         filename = (target_line[1:].rstrip())
         query_filename = (query_line[1:].rstrip())
@@ -77,7 +87,9 @@ for target_line in target_file:
 log_file_name = args.output + "/" + target_genome_name + "%s.fa.log" % filename
 target_temp.close()
 query_temp.close()
-subprocess.run( ["/usr/local/RepeatModeler/util/align.pl", "-force", "-crossmatch", "-caf", target_filename, query_filename], stdout=alignment_file, stderr=error_file)
+
+align_repeats(target_filename,query_filename,alignment_file)
+
 subprocess.run( ["rm", "-f", target_temp.name])
 subprocess.run( ["rm", "-f", query_temp.name])
 subprocess.run( ["rm", "-f", log_file_name])
