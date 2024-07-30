@@ -1,4 +1,5 @@
 import os
+#prevent our wildcards from matching _ s so snakemake's greedy matching doesn't give us grief
 wildcard_constraints:
     genome = "hg38",
     filterdist = "[\\d]+",
@@ -6,6 +7,7 @@ wildcard_constraints:
     target = "[^_]*",
     query = "[^_]*"
 
+#parses repeatmasker .out file to create a bed file
 rule repeatmasker_output_to_bed:
     input: 
         repeatmasker_out = "inputs/{target}.out",
@@ -14,19 +16,20 @@ rule repeatmasker_output_to_bed:
     conda: "envs/pybedtools.yml"
     shell: "python {input.script} -i {input.repeatmasker_out} -o {output}"
 
-#First we remove the simple/low complexity regions
+#first we remove the simple/low complexity regions
 rule filter_simple_repeats_and_low_complexity:
     input: "outputs/{filename}.bed"
     output: "outputs/nosimple_{filename}.bed"
     shell: "awk -F'[;\\t]'  '{{ if(($5 !~ /Simple_repeat.*/) &&($5 !~ /Low_complexity.*/)) print }}' {input} > {output}"
 
-
+#sort beds (many bed commands require us to sort our beds)
 rule sort_bed:
     input: "outputs/nosimple_{filepath}.bed"
     output: "outputs/{filepath}_sorted.bed"
     conda: "envs/pybedtools.yml"
     shell: "bedtools sort -i {input} > {output}"
 
+#filter out repeats that have other repeats too close to them on both sides
 rule filter_for_adjacent:
     input: 
         repeats = "outputs/{target}_sorted.bed",
@@ -35,19 +38,21 @@ rule filter_for_adjacent:
     conda: "envs/pybedtools.yml"
     shell: "python {input.script} -d {wildcards.filterdist} -i {input.repeats} -f {input.repeats} -o {output}"
 
+#we need the index for bedtools to make a genome file
 rule index_genome:
     input: "inputs/{target}.fna"
     output: "outputs/{target}.fna.fai"
     conda: "envs/pybedtools.yml"
     shell: "/u3/local/samtools/bin/samtools faidx {input} -o {output}"
 
+#creates a file that is needed by bedtools to perform the "slop" operation (names and lengths of chromosomes) using the samtools index of the genome .fna
 rule create_genome_file_for_bedtools:
     input: "outputs/{target}.fna.fai"
     output: "outputs/{target}_genomeFile.txt"
     conda: "envs/pybedtools.yml"
     shell: "awk -v OFS='\\t' {{'print $1,$2'}} {input} > {output}"
 
-#uses bedtools slop to add basepairs on both sides, not going past the ends of the chromosomes
+#uses bedtools slop to add bp basepairs on both sides of the repeat regions, not going past the ends of the chromosomes
 rule add_basepairs_on_both_sides:
     input:
         repeats = "outputs/f{filterdist}_{target}.bed",
@@ -57,7 +62,8 @@ rule add_basepairs_on_both_sides:
     conda: "envs/pybedtools.yml"
     shell: "python {input.script} -b {wildcards.bp} -i {input.repeats} -g {input.genome} -o {output}"
 
-#combine the bed files side by side so we can filter out the ones that were too close to the start/end to slop outwards
+#removed these steps because we should be able to deal with repeats that are close to the edges in our coverage calculations
+#these steps combine the bed files side by side so we can filter out the ones that were too close to the start/end to slop outwards
 #rule combine_beds:
 #    input:
 #        not_slopped = "outputs/f{filterdist}_{target}.bed",
@@ -80,6 +86,7 @@ rule add_basepairs_on_both_sides:
 #    conda: "envs/pybedtools.yml"
 #    shell: "cut -d$'\t' -f 1-6 {input} > {output}"
 
+#lift the repeats from the target genome to the query (requires a .chain file at the location target_query.chain in inputs
 rule lift_repeats:
     input:
         chain = "inputs/{target}_{query}.chain",
@@ -90,7 +97,7 @@ rule lift_repeats:
     conda: "envs/pybedtools.yml"
     shell: "/usr/local/ucscTools/liftOver {input.repeats} {input.chain} {output.mapped} {output.unmapped}"
 
-#gets a bed file of only the repeats that mapped over in human
+#gets a bed file of only the repeats that mapped over into query in the target (used by our parsing scripts)
 rule get_corresponding_unmapped_repeats:
     input:
         mapped_repeats = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}.bed",
@@ -98,10 +105,12 @@ rule get_corresponding_unmapped_repeats:
     output: "outputs/orig_corresponding_to_mapped_f{filterdist}_{target}_e{bp}_{query}.bed"
     shell: "awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.mapped_repeats} {input.target_repeats} > {output}"
 
-
-
-
 #split the files into beds by family, note, we use gensub to replace any / in family names with % so we can use them as file names
+#this is a checkpoint because we don't know exactly what/how many families we will find in the bed ahead of time
+#this script has outputs of a bunch of repeat files for each family -- we don't include these in the outputs because:
+# a) there are often 1000+ of them, so snakemake doing version/editing checking on them makes things slow
+# b) we don't know how many there will be (we could give snakemake an output directory but then we run into the issue mentioned in a)
+# so please don't mess with the query_beds/family.bed and target_beds/family.bed files or delete the alignments, target_fasta or query_fasta files after running this step
 checkpoint split_file_by_families:
     input: 
         mapped_repeats = "outputs/mapped_{repeatfile}.bed",
@@ -119,7 +128,7 @@ checkpoint split_file_by_families:
         shell("mkdir -p outputs/{wildcards.repeatfile}/query_fasta")
 
 
-
+#uses crossmatch (since it is singlethreaded which allows us to run many families at once) to align all instances of a family
 rule align_family:
     input: 
         mapped_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}/query_beds/{family}.bed", 
@@ -136,8 +145,9 @@ rule align_family:
     conda: "envs/pybedtools.yml"
     shell: """python {input.script} -i {input.target_bed} -m {input.mapped_bed} -t {input.target_genome} -q {input.query_genome} -o outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query} -f {wildcards.family}"""
 
-
+#need to deal with parens in family names here 
 def aggregate_families(wildcards):
+     #asking for checkpoint output forces the checkpoint job split_file_by_families to run before this
      checkpoint_output = checkpoints.split_file_by_families.get(**wildcards).output[0]
      sections = checkpoint_output.split("/")
      path = sections[0] + "/" + sections[1] + "/query_beds/"
@@ -145,13 +155,14 @@ def aggregate_families(wildcards):
      path_to_summary = sections[0] + "/" + sections[1] + "/alignments/"
      return expand(os.path.join(path_to_summary, "{FAMILY}/alignment_summary.txt"), FAMILY=families)
 
-
+#rule to find all the family files, which we don't know how many there will be (hence the function-as-input)
 rule align_all_families:
     input: 
         aggregate_families
     output: "outputs/{repeatfile}/all_alignment_summary.txt"
     shell: "cat ./outputs/{wildcards.repeatfile}/alignments/*/alignment_summary.txt > {output}"
 
+# splits the lifted/mapped beds by family for use by our .caf parser
 checkpoint target_interval_bed_per_family:
     input:
         target_bed = "outputs/f{filterdist}_{target}.bed",
@@ -163,10 +174,8 @@ checkpoint target_interval_bed_per_family:
         shell("awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.query_bed} {input.target_bed} > {output.all_target}")
         shell("awk -F'[;\\t]' '{{print>(\"outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/nonexpanded_target_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {output.all_target}")
 
-
-
-
-#remove the 7_19_ once I rerun the rest of the pipeline
+#parses in our file of all the alignments (lines with repeat name and alignments in CAF/yaCAF file format)
+#outputs a csv with the coverage information for each family
 rule parse_family_caf:
     input:
         script = "scripts/pared_down_parse_family_caf.py",
@@ -187,7 +196,7 @@ def aggregate_tsvs(wildcards):
      path_to_summary = sections[0] + "/" + sections[1] + "/alignments/"
      return expand(os.path.join(path_to_summary, "{FAMILY}/repeat_alignment_coverage.csv"), FAMILY=families)
 
-
+#rule to force all the familys' .caf files to be parsed in
 rule parse_all_caf: 
     input: 
         aggregate_tsvs
