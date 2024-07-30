@@ -67,7 +67,7 @@ def processAlignments(repeat_id, alignment_list, repeat_bedline, expanded_bedlin
         #check that this is an alignment of the repeat to itself in the other genome
         alignment_list = alignment.split(",")
         qid = alignment_list[4].split(":")[1]
-        #check that this is an alignment of the repeat we're looking for -- if this fails, our regex may be failing to match alignment lines -- possible that there are unknown (not ACTG or N characters in the original strings)
+        #check that this is an alignment of the repeat we're looking for -- if this fails some alignments or ids are not being recognized correctly
         assert(qid.strip()==repeat_id.replace("/", "%").strip())
         #subtract 1 because the caf indices are fully closed, one indexed
         qstart = int(alignment_list[5])
@@ -128,14 +128,6 @@ repeat_id = ""
 num_alignments_found = False
 num_alignments_expected = -1
 num_alignments_found = -1
-#regex for finding id of repeat (repeatmasker id and line of the original bed file they came from)
-id_regex = re.compile(r".*#(?P<rmid>\d+)#(?P<bedline>\d+)::.*")
-num_alignments_regex = re.compile(r"#  alignments    : (?P<num>\d+).*")
-#example caf line below:
-#3307,1.92,0.00,0.00,hg38:Zaphod5b#DNA%hAT-Tip100#80289#95793,1,365,0,
-#hg38:Zaphod5b#DNA%hAT-Tip100#80289,95793,1,365,0,1,,,CCTGCC/TCCTCAGCAACGGCCCTGCTCCAAACCGGTGTTACAGTGATCTGATTATTGTAATTGATGACATTAGGAATAAGGAATCCACACAGAATAATACAGGTGCCTGTCAT/CGCCAGAGTGGTTTTATTCATTGTTAGAGAAGTTC/AATAAAGTTGAAAGAAAGCATCTACATGGGCTAGAACAGCAA/CAAAGCATGTTTT/CAGTCCTTTCTTAATTTGTGAATAAAATGATGAATTCCAGAAGCCTATTTTCACTGACAATTGAAATCAGCCCTGTACACCCCT/CGCACCTGCTCTCTACCCCTGGGAGTTCTGCTCTGTCTTCCAGTCTCTGCG/AGGAAGCTCCCGCCCTGGCCAGCCCTAGGCTCCC,comparison.matrix
-#sid group expression may need to change if comma is removed from sid
-alignment_line_regex =  re.compile(r"^(?P<qscore>\d+),(?P<qperc_subs>\d+.\d+),(?P<qperc_del>\d+.\d+),(?P<qperc_ins>\d+.\d+),(?P<qid>[^,]+),(?P<qstart>\d+),(?P<qend>\d+),(?P<qrem>\d+),(?P<sid>[^,]+,[\d]+),(?P<sstart>\d+),(?P<send>\d+),(?P<srem>\d+),(?P<orientation>[01]),,,(?P<alignment>[^,]+),comparison\.matrix\s*")
 
 
 target_repeat = BedTool(args.repeats)
@@ -145,6 +137,7 @@ num_alignments_expected = 0
 with open(args.caf, "r") as caf_file,open(args.output, "w") as outfile:
     for line in caf_file:
         if line[0] == ">":
+            #id lines look like this: >1 alignments for:5S#rRNA#29137#34877
             repeat_id = line.split(":")[1]
             repeat_bedline = target_repeat[bed_idx]
             split_bedline = repeat_bedline.name.split(";")
