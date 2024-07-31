@@ -13,13 +13,17 @@ wildcard_constraints:
 anchorwave_location = "/home/rhubley/projects/multi-species-alignment/AnchorWave-1.2.3/anchorwave"
 #the minimap version I used is minimap 2.28-r1209
 minimap_location = "/home/jholz/minimap2/minimap2-2.28_x64-linux/minimap2"
+#location of LAST for maf-convert
+maf_convert_location = "/usr/local/last-1410/bin/maf-convert"
+#location of UCSC liftover
+ucscTools_location = "/usr/local/ucscTools"
 
 #Generate CDS sequences from .gff file -- this takes some time
 rule generate_cds:
     input:
-        fna = "inputs/{target_genome}.fna",
-        gff = "inputs/{target_genome}.gff"
-    output: "outputs/anchorwave_alignments/{target_genome}_cds.fa"
+        fna = "inputs/{target}.fna",
+        gff = "inputs/{target}.gff"
+    output: "outputs/anchorwave_alignments/{target}_cds.fa"
     shell: anchorwave_location + " gff2seq -r {input.fna} -i {input.gff} -o {output}"
 
 #use minimap to align the cds against a genome (we need to do this for both target and query)
@@ -33,30 +37,86 @@ rule align_cds_to_genome:
 #create the anchors
 rule create_anchors:
     input: 
-        target_gff = "inputs/{target_genome}.gff",
-        target_fna = "inputs/{target_genome}.fna",
-        target_cds_alignment = "outputs/anchorwave_alignments/{target_genome}_cds{target_genome}.sam",
-        query_cds_alignment = "outputs/anchorwave_alignments/{query_genome}_cds{target_genome}.sam",
-        cds = "outputs/anchorwave_alignments/{target_genome}_cds.fa",
-        query_fna = "inputs/{query_genome}.fna",
-    output: "outputs/anchorwave_alignments/{target_genome}_{query_genome}.anchors"
+        target_gff = "inputs/{target}.gff",
+        target_fna = "inputs/{target}.fna",
+        target_cds_alignment = "outputs/anchorwave_alignments/{target}_cds{target}.sam",
+        query_cds_alignment = "outputs/anchorwave_alignments/{query}_cds{target}.sam",
+        cds = "outputs/anchorwave_alignments/{target}_cds.fa",
+        query_fna = "inputs/{query}.fna",
+    output: "outputs/anchorwave_alignments/{target}_{query}.anchors"
     shell:  anchorwave_location + " proali -i {input.target_gff} -r {input.target_fna} -a {input.query_cds_alignment} -as {input.cds} -ar {input.query_cds_alignment} -s {input.query_fna} -n {output} -R 1 -Q 1 -ns"    
 
 #do the alignment -- note f_maf is the alignment file for interanchor regions, and maf is the alignment file for the whole genome
 rule anchorwave_alignment:
     input:
-        target_gff = "inputs/{target_genome}.gff",
-        target_fna = "inputs/{target_genome}.fna",
-        target_cds_alignment = "outputs/anchorwave_alignments/{target_genome}_cds{target_genome}.sam",
-        query_cds_alignment = "outputs/anchorwave_alignments/{query_genome}_cds{target_genome}.sam",
-        cds = "outputs/anchorwave_alignments/{target_genome}_cds.fa",
-        query_fna = "inputs/{query_genome}.fna",
-        anchors = "outputs/anchorwave_alignments/{target_genome}_{query_genome}.anchors"
+        target_gff = "inputs/{target}.gff",
+        target_fna = "inputs/{target}.fna",
+        target_cds_alignment = "outputs/anchorwave_alignments/{target}_cds{target}.sam",
+        query_cds_alignment = "outputs/anchorwave_alignments/{query}_cds{target}.sam",
+        cds = "outputs/anchorwave_alignments/{target}_cds.fa",
+        query_fna = "inputs/{query}.fna",
+        anchors = "outputs/anchorwave_alignments/{target}_{query}.anchors"
     output: 
-        maf = "outputs/anchorwave_alignments/{target_genome}_{query_genome}.maf",
-        f_maf = "outputs/anchorwave_alignments/{target_genome}_{query_genome}.f.maf",
-        log =  "outputs/anchorwave_alignments/{target_genome}_{query_genome}.log"
+        maf = "outputs/anchorwave_alignments/{target}_{query}.maf",
+        f_maf = "outputs/anchorwave_alignments/{target}_{query}.f.maf",
+        log =  "outputs/anchorwave_alignments/{target}_{query}.log"
     shell: "/usr/bin/time " + anchorwave_location +" proali -i {input.target_gff} -r {input.target_fna}  -a {input.query_cds_alignment} -as {input.cds} -ar {input.target_cds_alignment} -s {input.query_fna} -n {input.anchors} -o {output.maf} -t 1 -R 1 -Q 1 -B -2 -O1 -4 -E1 -2 -O2 -80 -E2 -1 -f {output.f_maf} -w 38000 -fa3 200000 > {output.log} 2>&1"
+
+#generate the chain file 
+#we use LAST's maf-convert script here, though you could also set it up to use UCSC's pipeline (axtChain, chinPreNet, netChainSubset)
+#the chain file generation step is a bit of a black box, but it seemed that using UCSC's tools instead of maf-convert led to slightly fewer repeats mapping over, 
+#presumably because there is a filtering step in the UCSC pipeline which discards some lower-quality chains
+
+rule generate_chain:
+    input: "outputs/anchorwave_alignments/{target}_{query}.maf"
+    output: "outputs/chains/{target}_{query}.chain"
+    shell: maf_convert_location + " chain {input} > {output}"
+
+#uncomment these rules and comment the generate_chain rule to switch to using the UCSC pipeline for generating the chain file
+'''
+rule get_chromosome_sizes:
+    input: "inputs/{genome}.fna"
+    output: "outputs/chains/{genome}_sizes.txt"
+    shell: ucscTools_location + "/faSize -detailed {input} > {output}"
+
+rule convert_to_psl:
+    input: "outputs/anchorwave_alignments/{target}_{query}.maf"
+    output: "outputs/chains/{target}_{query}.psl"
+    shell: maf_convert_location + " psl {input} > {output}"
+
+rule axt_chain:
+    input: 
+        psl = "outputs/chains/{target}_{query}.psl",
+        target_fna = "inputs/{target}.fna",
+        query_fna = "inputs/{query}.fna"
+    output: "outputs/chains/{target}_{query}.axtchain"
+    shell: ucscTools_location + "/axtChain -linearGap=loose -psl {input.psl} -faQ -faT {inputs.target_fna} {inputs.query_fna} {output}"
+
+rule chain_prenet: 
+    input: 
+        target_sizes = "outputs/chains/{target}_sizes.txt",
+        query_sizes = "outputs/chains/{query}_sizes.txt",
+        axt_chain = "outputs/chains/{target}_{query}.axtchain"
+    output: "outputs/chains/{target}_{query}.preNet"
+    shell: ucscTools_location + "/chainPreNet {input.axt_chain} {input.target_sizes} {input.query_sizes} {output}"
+
+rule chain_net:
+    input: 
+        target_sizes = "outputs/chains/{target}_sizes.txt",
+        query_sizes = "outputs/chains/{query}_sizes.txt",
+        prenet = "outputs/chains/{target}_{query}.preNet"
+    output:
+        ref_target = "outputs/chains/{target}_{query}_refTarget.chainNet",
+        species_target = "outputs/chains/{target}_{query}_speciesTarget.chainNet"
+    shell: ucscTools_location + "/chainNet {input.prenet} {input.target_sizes} {input.query_sizes} {output.ref_target} {output.species_target}"
+
+rule final_chain:
+    input:
+        ref_target =  "outputs/chains/{target}_{query}_refTarget.chainNet",
+        prenet = "outputs/chains/{target}_{query}.preNet"
+    output: "outputs/chains/{target}_{query}.chain"
+    shell: ucscTools_location + "/netChainSubset {input.ref_target} {input.prenet} {output}"
+'''
 
 #parses repeatmasker .out file to create a bed file
 rule repeatmasker_output_to_bed:
@@ -146,7 +206,7 @@ rule lift_repeats:
         mapped = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}.bed",
         unmapped = "outputs/unmapped_f{filterdist}_{target}_e{bp}_{query}.bed"
     conda: "envs/pybedtools.yml"
-    shell: "/usr/local/ucscTools/liftOver {input.repeats} {input.chain} {output.mapped} {output.unmapped}"
+    shell: ucscTools_location + "/liftOver {input.repeats} {input.chain} {output.mapped} {output.unmapped}"
 
 #gets a bed file of only the repeats that mapped over into query in the target (used by our parsing scripts)
 rule get_corresponding_unmapped_repeats:
