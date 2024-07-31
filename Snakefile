@@ -1,11 +1,62 @@
 import os
-#prevent our wildcards from matching _ s so snakemake's greedy matching doesn't give us grief
+#prevent our wildcards from matching _s so snakemake's greedy matching doesn't give us grief
 wildcard_constraints:
-    genome = "hg38",
+    genome = "[^_]*",
     filterdist = "[\\d]+",
     bp = "[\\d]+",
     target = "[^_]*",
-    query = "[^_]*"
+    query = "[^_]*",
+
+#AnchorWave alignment steps are based on instructions found here: https://github.com/baoxingsong/AnchorWave/blob/master/doc/guideline.pdf
+#(the AnchorWave github)
+#the anchorwave version I used is anchorwave v1.2.3 with an update to deal with overlapping cds sequences (courtesy of Robert Hubley)
+anchorwave_location = "/home/rhubley/projects/multi-species-alignment/AnchorWave-1.2.3/anchorwave"
+#the minimap version I used is minimap 2.28-r1209
+minimap_location = "/home/jholz/minimap2/minimap2-2.28_x64-linux/minimap2"
+
+#Generate CDS sequences from .gff file -- this takes some time
+rule generate_cds:
+    input:
+        fna = "inputs/{target_genome}.fna",
+        gff = "inputs/{target_genome}.gff"
+    output: "outputs/anchorwave_alignments/{target_genome}_cds.fa"
+    shell: anchorwave_location + " gff2seq -r {input.fna} -i {input.gff} -o {output}"
+
+#use minimap to align the cds against a genome (we need to do this for both target and query)
+rule align_cds_to_genome:
+    input:
+        genome = "inputs/{genome}.fna",
+        cds = "outputs/anchorwave_alignments/{cds_genome}_cds.fa"
+    output: "outputs/anchorwave_alignments/{genome}_cds{cds_genome}.sam"
+    shell: minimap_location + " -x splice -t 11 -k 12 -a -p 0.4 -N 20 {input.genome} {input.cds} > {output}"
+
+#create the anchors
+rule create_anchors:
+    input: 
+        target_gff = "inputs/{target_genome}.gff",
+        target_fna = "inputs/{target_genome}.fna",
+        target_cds_alignment = "outputs/anchorwave_alignments/{target_genome}_cds{target_genome}.sam",
+        query_cds_alignment = "outputs/anchorwave_alignments/{query_genome}_cds{target_genome}.sam",
+        cds = "outputs/anchorwave_alignments/{target_genome}_cds.fa",
+        query_fna = "inputs/{query_genome}.fna",
+    output: "outputs/anchorwave_alignments/{target_genome}_{query_genome}.anchors"
+    shell:  anchorwave_location + " proali -i {input.target_gff} -r {input.target_fna} -a {input.query_cds_alignment} -as {input.cds} -ar {input.query_cds_alignment} -s {input.query_fna} -n {output} -R 1 -Q 1 -ns"    
+
+#do the alignment -- note f_maf is the alignment file for interanchor regions, and maf is the alignment file for the whole genome
+rule anchorwave_alignment:
+    input:
+        target_gff = "inputs/{target_genome}.gff",
+        target_fna = "inputs/{target_genome}.fna",
+        target_cds_alignment = "outputs/anchorwave_alignments/{target_genome}_cds{target_genome}.sam",
+        query_cds_alignment = "outputs/anchorwave_alignments/{query_genome}_cds{target_genome}.sam",
+        cds = "outputs/anchorwave_alignments/{target_genome}_cds.fa",
+        query_fna = "inputs/{query_genome}.fna",
+        anchors = "outputs/anchorwave_alignments/{target_genome}_{query_genome}.anchors"
+    output: 
+        maf = "outputs/anchorwave_alignments/{target_genome}_{query_genome}.maf",
+        f_maf = "outputs/anchorwave_alignments/{target_genome}_{query_genome}.f.maf",
+        log =  "outputs/anchorwave_alignments/{target_genome}_{query_genome}.log"
+    shell: "/usr/bin/time " + anchorwave_location +" proali -i {input.target_gff} -r {input.target_fna}  -a {input.query_cds_alignment} -as {input.cds} -ar {input.target_cds_alignment} -s {input.query_fna} -n {input.anchors} -o {output.maf} -t 1 -R 1 -Q 1 -B -2 -O1 -4 -E1 -2 -O2 -80 -E2 -1 -f {output.f_maf} -w 38000 -fa3 200000 > {output.log} 2>&1"
 
 #parses repeatmasker .out file to create a bed file
 rule repeatmasker_output_to_bed:
