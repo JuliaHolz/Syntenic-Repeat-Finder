@@ -2,7 +2,7 @@ import os
 
 #To run this pipeline you need several things
 #software:
-#conda (to create the pybedtools environment from /envs/pybedtools.yml (which installs pybedtools)
+#conda (to create the pybedtools environment from /envs/pybedtools.yml (which installs pybedtools))
 #ucsc tools
 #minimap
 #LAST (from which we use the maf-convert script)
@@ -192,27 +192,29 @@ rule add_basepairs_on_both_sides:
 
 #removed these steps because we should be able to deal with repeats that are close to the edges in our coverage calculations
 #these steps combine the bed files side by side so we can filter out the ones that were too close to the start/end to slop outwards
-#rule combine_beds:
-#    input:
-#        not_slopped = "outputs/f{filterdist}_{target}.bed",
-#        slopped = "outputs/f{filterdist}_{target}_slop_{bp}.bed"
-#    output: "outputs/f{filterdist}_{target}_combined_{bp}.bed"
-#    conda: "envs/pybedtools.yml"
-#    shell: "paste -d\"\\t\" {input.slopped} {input.not_slopped}>{output}"
+'''
+rule combine_beds:
+    input:
+        not_slopped = "outputs/f{filterdist}_{target}.bed",
+        slopped = "outputs/f{filterdist}_{target}_slop_{bp}.bed"
+    output: "outputs/f{filterdist}_{target}_combined_{bp}.bed"
+    conda: "envs/pybedtools.yml"
+    shell: "paste -d\"\\t\" {input.slopped} {input.not_slopped}>{output}"
 
-#rule filter_repeats_close_to_ends:
-#    input:
-#        repeats =  "outputs/f{filterdist}_{target}_combined_{bp}.bed",
-#        script = "scripts/filter_repeats_close_to_ends.py"
-#    output: "outputs/f{filterdist}_{target}_e{bp}.bed"
-#    conda: "envs/pybedtools.yml"
-#    shell: "python {input.script} -b {wildcards.bp} -i {input.repeats} -o {output}"
+rule filter_repeats_close_to_ends:
+    input:
+        repeats =  "outputs/f{filterdist}_{target}_combined_{bp}.bed",
+        script = "scripts/filter_repeats_close_to_ends.py"
+    output: "outputs/f{filterdist}_{target}_e{bp}.bed"
+    conda: "envs/pybedtools.yml"
+    shell: "python {input.script} -b {wildcards.bp} -i {input.repeats} -o {output}"
 
-#rule remove_last_6_cols_of_bed:
-#    input: "outputs/f{filterdist}_{target}_e{bp}.bed"
-#    output: "outputs/6_f{filterdist}_{target}_e{bp}.bed"
-#    conda: "envs/pybedtools.yml"
-#    shell: "cut -d$'\t' -f 1-6 {input} > {output}"
+rule remove_last_6_cols_of_bed:
+    input: "outputs/f{filterdist}_{target}_e{bp}.bed"
+    output: "outputs/6_f{filterdist}_{target}_e{bp}.bed"
+    conda: "envs/pybedtools.yml"
+    shell: "cut -d$'\t' -f 1-6 {input} > {output}"
+'''
 
 #lift the repeats from the target genome to the query (requires a .chain file at the location target_query.chain in inputs
 rule lift_repeats:
@@ -236,9 +238,9 @@ rule get_corresponding_unmapped_repeats:
 #split the files into beds by family, note, we use gensub to replace any / in family names with % so we can use them as file names
 #this is a checkpoint because we don't know exactly what/how many families we will find in the bed ahead of time
 #this script has outputs of a bunch of repeat files for each family -- we don't include these in the outputs because:
-# a) there are often 1000+ of them, so snakemake doing version/editing checking on them makes things slow
+# a) there are often 1000+ of them, so snakemake doing modification checking on them makes things slow
 # b) we don't know how many there will be (we could give snakemake an output directory but then we run into the issue mentioned in a)
-# so please don't mess with the query_beds/family.bed and target_beds/family.bed files or delete the alignments, target_fasta or query_fasta files after running this step
+# so please don't mess with the query_beds/family.bed and target_beds/family.bed files or delete the alignments, target_fasta or query_fasta folders after running this step
 checkpoint split_file_by_families:
     input: 
         mapped_repeats = "outputs/mapped_{repeatfile}.bed",
@@ -331,3 +333,5 @@ rule parse_all_caf:
     output: "outputs/f{filterdist}_{target}_e{bp}_{query}/num_csv_lines_summary.txt"
     threads: 1
     shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/alignments/*/repeat_alignment_coverage.csv | wc -l > {output}"
+
+#awk command: awk -F';' 'previd==$3{count1 = split(prevline, prev,  " ", seps); count2 = split($0, curr, " ", seps2); prevline = curr[1] "\t" prev[2] "\t" (prev[3]<curr[3]?curr[3]:prev[3]) "\t" prev[4] "\t" prev[5] "\t" prev[6]} previd!=$3{print prevline; prevline = $0}{previd=$3}' sorted.txt
