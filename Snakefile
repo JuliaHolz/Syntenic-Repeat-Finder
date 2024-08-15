@@ -219,7 +219,7 @@ rule remove_last_6_cols_of_bed:
 #lift the repeats from the target genome to the query (requires a .chain file at the location target_query.chain in inputs
 rule lift_repeats:
     input:
-        chain = "inputs/{target}_{query}.chain",
+        chain = "outputs/chains/{target}_{query}.chain",
         repeats = "outputs/f{filterdist}_{target}_e{bp}.bed"
     output: 
         mapped = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}.bed",
@@ -243,20 +243,22 @@ rule get_corresponding_unmapped_repeats:
 # so please don't mess with the query_beds/family.bed and target_beds/family.bed files or delete the alignments, target_fasta or query_fasta folders after running this step
 checkpoint split_file_by_families:
     input: 
-        mapped_repeats = "outputs/mapped_{repeatfile}.bed",
-        corresponding_repeats = "outputs/orig_corresponding_to_mapped_{repeatfile}.bed"
-    output: "outputs/{repeatfile}/family_summary.txt"
+        mapped_repeats = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}.bed",
+        corresponding_repeats = "outputs/orig_corresponding_to_mapped_f{filterdist}_{target}_e{bp}_{query}.bed"
+    output: "outputs/f{filterdist}_{target}_e{bp}_{query}/family_summary.txt"
     run:
-        shell("mkdir -p outputs/{wildcards.repeatfile}")
-        shell("mkdir -p outputs/{wildcards.repeatfile}/query_beds")
-        shell("mkdir -p outputs/{wildcards.repeatfile}/target_beds")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/{wildcards.repeatfile}/query_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/{wildcards.repeatfile}/target_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.corresponding_repeats}")
+        location = "f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}"
+        shell("mkdir -p outputs/" + location)
+        shell("mkdir -p outputs/" + location + "/query_beds")
+        shell("mkdir -p outputs/" + location + "/target_beds")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\" gensub(/[/\\\\\\(\\)]/, \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/target_beds/\" gensub(/[/\\\\\\(\\)]/, \"%\", \"g\", $4) \".bed\")}}' {input.corresponding_repeats}")
         shell("awk -F '[\\t;]' '{{print $4}}' {input.mapped_repeats} | sort | uniq -c > {output}")
-        shell("mkdir -p outputs/{wildcards.repeatfile}/alignments")
-        shell("mkdir -p outputs/{wildcards.repeatfile}/target_fasta")
-        shell("mkdir -p outputs/{wildcards.repeatfile}/query_fasta")
+        shell("mkdir -p outputs/" + location + "/alignments")
+        shell("mkdir -p outputs/" + location+ "/target_fasta")
+        shell("mkdir -p outputs/"+location+"/query_fasta")
 
+#        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
 
 #uses crossmatch (since it is singlethreaded which allows us to run many families at once) to align all instances of a family
 rule align_family:
@@ -289,8 +291,8 @@ def aggregate_families(wildcards):
 rule align_all_families:
     input: 
         aggregate_families
-    output: "outputs/{repeatfile}/all_alignment_summary.txt"
-    shell: "cat ./outputs/{wildcards.repeatfile}/alignments/*/alignment_summary.txt > {output}"
+    output: "outputs/f{filterdist}_{target}_e{bp}_{query}/all_alignment_summary.txt"
+    shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/alignments/*/alignment_summary.txt > {output}"
 
 # splits the lifted/mapped beds by family for use by our .caf parser
 checkpoint target_interval_bed_per_family:
@@ -319,6 +321,7 @@ rule parse_family_caf:
     shell: "python {input.script} -c {input.family_caf} -r {input.family_target_bed} -e {input.family_expanded_bed} -o {output}"
 
 def aggregate_tsvs(wildcards):
+     align_checkpoint_output= checkpoints.split_file_by_families.get(**wildcards)
      checkpoint_output = checkpoints.target_interval_bed_per_family.get(**wildcards).output[0]
      sections = checkpoint_output.split("/")
      path = sections[0] + "/" + sections[1] + "/query_beds/"
@@ -329,9 +332,22 @@ def aggregate_tsvs(wildcards):
 #rule to force all the familys' .caf files to be parsed in
 rule parse_all_caf: 
     input: 
-        aggregate_tsvs
+        wc = aggregate_tsvs,
+        alignments_done = "outputs/f{filterdist}_{target}_e{bp}_{query}/all_alignment_summary.txt"
     output: "outputs/f{filterdist}_{target}_e{bp}_{query}/num_csv_lines_summary.txt"
     threads: 1
     shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/alignments/*/repeat_alignment_coverage.csv | wc -l > {output}"
 
 #awk command: awk -F';' 'previd==$3{count1 = split(prevline, prev,  " ", seps); count2 = split($0, curr, " ", seps2); prevline = curr[1] "\t" prev[2] "\t" (prev[3]<curr[3]?curr[3]:prev[3]) "\t" prev[4] "\t" prev[5] "\t" prev[6]} previd!=$3{print prevline; prevline = $0}{previd=$3} END{print prevline}' sorted.txt
+
+rule sort_bed_RMid:
+    input: "outputs/{genome}.bed"
+    output: "outputs/idsorted_{genome}.bed"
+    shell: "sort -t\";\" -nk3 {input}>{output}"
+
+#we merge by rm id to combine elements that are fragmented but have the same id, the family name/id line are retained from the first-appearing element in the .bed
+rule merge_same_RMid:
+    input: "outputs/idsorted_{genome}.bed"
+    output: "outputs/merged_idsorted_{genome}.bed"
+    shell: "awk -F';' 'previd==$3{{count1 = split(prevline, prev, \" \", seps); count2 = split($0, curr, \" \", seps2); prevline = curr[1] \"\\t\" prev[2] \"\\t\" (prev[3]<curr[3]?curr[3]:prev[3]) \"\\t\" prev[4] \"\\t\" prev[5] \"\\t\" prev[6]}} previd!=$3{{print prevline; prevline = $0}}{{previd=$3}} END{{print prevline}}'" + " {input} > {output}"
+
