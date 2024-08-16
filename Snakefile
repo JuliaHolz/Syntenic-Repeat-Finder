@@ -316,9 +316,9 @@ checkpoint split_file_by_families:
         shell("mkdir -p outputs/" + location+ "/target_fasta")
         shell("mkdir -p outputs/"+location+"/query_fasta")
 
-#the above gensub command, I did not have time to test it 
+#the above gensub command, I did not have time to test it, so if this step errors, it's probably that
 #(since snakemake needed to re-do all the alignments first because I changed the file naming), 
-#if it's not working, below is the version that just substitutes slashes in the file names,
+#if it's not working, below is the version of those two shell commands that just substitutes slashes in the file names,
 # but you will need to figure out how to deal with parentheses in the file names (or manually replace them after this step)
 # shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
 # shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/target_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.corresponding_repeats}")
