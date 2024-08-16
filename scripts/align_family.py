@@ -3,14 +3,14 @@ import argparse
 import time
 
 parser = argparse.ArgumentParser(
-                    prog='AddBasePairs',
-                    description='takes in a sorted bed file of genomic locations, and filters out those without unique sequence on one or more sides, outputting a new, filtered bed file.',
-                    epilog='Uses pybedtools  filter')
+                    prog='AlignFamily',
+                    description='aligns all instances of a family using crossmatch, and outputs them in caf/yaCaf format',
+                    epilog='outputs target and query fastas with sequences of repeats, as alignments.caf (which contains all the alignments) ')
 parser.add_argument('-i', '--input', action="store", help = "bed file containing the repeats in the target genome")
 parser.add_argument('-m', '--mapped', action="store", help = "file containing the repeats mapped to the query genome")
 parser.add_argument('-t', '--targetgenome', action="store", help = "fasta file containing the target genome (which -i bed file refers to)")
 parser.add_argument('-q', '--querygenome', action="store", help = "fasta file containing the query genome (which -m bed file refers to)")
-parser.add_argument('-o', '--output', action="store", help = "location where outputs for this genome/set of repeats should be output (alignments, target_fasta and query_fasta directories should already exist in this location)")
+parser.add_argument('-o', '--output', action="store", help = "location where outputs for this genome/set of repeats should be output (alignments, target_fasta and query_fasta directories should already exist in this location) and alignments_summary.txt")
 parser.add_argument('-f', '--family', action="store", help = "family name")
 
 args = parser.parse_args()
