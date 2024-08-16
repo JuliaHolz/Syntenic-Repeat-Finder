@@ -134,7 +134,7 @@ rule FASTGAaln_to_psl:
 rule remove_descriptions_from_psl:
     input: 
         psl = "outputs/chains/{target}_{query}_fastga_verbose.psl",
-        script = "scripts/remove_descriptions_from_psl.py"
+        script = "scripts/modify_fastga_psl.py"
     output: "outputs/chains/{target}_{query}_fastga.psl"
     conda: "envs/pybedtools.yml"
     shell: "python {input.script} -i {input.psl} -o {output}"
