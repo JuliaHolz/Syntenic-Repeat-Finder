@@ -23,6 +23,7 @@ wildcard_constraints:
     bp = "[\\d]+",
     target = "[^_]*",
     query = "[^_]*",
+    aligner = "[^_]*",
 
 #AnchorWave alignment steps are based on instructions found here: https://github.com/baoxingsong/AnchorWave/blob/master/doc/guideline.pdf
 #(the AnchorWave github)
@@ -34,6 +35,8 @@ minimap_location = "/home/jholz/minimap2/minimap2-2.28_x64-linux/minimap2"
 maf_convert_location = "/usr/local/last-1410/bin/maf-convert"
 #location of UCSC liftover
 ucscTools_location = "/usr/local/ucscTools"
+#location of FAST-GA if using
+fastGA_location = "/home/jholz/FASTGA"
 
 #Generate CDS sequences from .gff file -- this takes some time
 rule generate_cds:
@@ -84,56 +87,106 @@ rule anchorwave_alignment:
 #the chain file generation step is a bit of a black box, but it seemed that using UCSC's tools instead of maf-convert led to slightly fewer repeats mapping over, 
 #presumably because there is a filtering step in the UCSC pipeline which discards some lower-quality chains
 
-rule generate_chain:
+rule generate_chain_from_maf:
     input: "outputs/anchorwave_alignments/{target}_{query}.maf"
-    output: "outputs/chains/{target}_{query}.chain"
+    output: "outputs/chains/{target}_{query}_anchorwave.chain"
     shell: maf_convert_location + " chain {input} > {output}"
 
-#uncomment these rules and comment the generate_chain rule to switch to using the UCSC pipeline for generating the chain file
-'''
+#these rules are for using FASTGA as our aligner
+rule make_tmp: 
+    output: "outputs/FASTGAtmp/folder_made.txt"
+    run: 
+        shell("mkdir -p outputs/FASTGAtmp")
+        shell("touch outputs/FASTGAtmp/folder_made.txt")
+
+rule make_GDB:
+    input: 
+        genome = "inputs/{genome}.fna",
+    output: "outputs/FASTGA_alignments/{genome}.1gdb"
+    shell: fastGA_location+"/FAtoGDB {input.genome} {output}"
+
+
+rule make_GIX:
+    input: 
+            gdb ="outputs/FASTGA_alignments/{genome}.1gdb",
+            tmp_folder = "outputs/FASTGAtmp/folder_made.txt"
+    output: "outputs/FASTGA_alignments/{genome}.gix"
+    threads: 16
+    shell: fastGA_location+"/GIXmake -v -T16 {input.gdb} -P./outputs/FASTGAtmp"
+
+rule FASTGA: 
+    input: 
+        target_gix = "outputs/FASTGA_alignments/{target}.gix",
+        query_gix = "outputs/FASTGA_alignments/{query}.gix",
+        target_genome = "inputs/{target}.fna",
+        query_genome = "inputs/{query}.fna",
+    output: "outputs/FASTGA_alignments/{target}_{query}.1aln"
+    threads: 16
+    shell: fastGA_location+"/FastGA -v -T16 -1:./{output} {input.query_gix} {input.target_gix} -P./outputs/FASTGAtmp" 
+
+rule FASTGAaln_to_psl:
+    input: "outputs/FASTGA_alignments/{target}_{query}.1aln"
+    output: "outputs/chains/{target}_{query}_fastga_verbose.psl"
+    threads: 16
+    shell: fastGA_location + "/ALNtoPSL -T16 {input} > {output}"
+
+#we need to remove the longer descriptions of the source chromosomes for liftover to accept our PSL file
+rule remove_descriptions_from_psl:
+    input: 
+        psl = "outputs/chains/{target}_{query}_fastga_verbose.psl",
+        script = "scripts/remove_descriptions_from_psl.py"
+    output: "outputs/chains/{target}_{query}_fastga.psl"
+    conda: "envs/pybedtools.yml"
+    shell: "python {input.script} -i {input.psl} -o {output}"
+
+
 rule get_chromosome_sizes:
     input: "inputs/{genome}.fna"
     output: "outputs/chains/{genome}_sizes.txt"
     shell: ucscTools_location + "/faSize -detailed {input} > {output}"
-
+#uncomment this rule (convert_to_psl) and comment the generate_chain_from_maf rule to switch to using the UCSC pipeline for generating the chain file after AnchorWave alignment as opposed to mafConvert 
+#we found mafConvert to lead to slightly more repeats mapping across genomes, likely due to a filtering step that filters chains in the UCSC pipeline
+'''
 rule convert_to_psl:
     input: "outputs/anchorwave_alignments/{target}_{query}.maf"
-    output: "outputs/chains/{target}_{query}.psl"
+    output: "outputs/chains/{target}_{query}_anchorwave.psl"
     shell: maf_convert_location + " psl {input} > {output}"
-
+'''
+#these rules are the UCSC pipeline for generating a chain file, currently used for converting the FASTGA psl to a .chain file
+#but we could also use it to convert the .maf output by AnchorWave if we want a comparison on slightly more even footing
 rule axt_chain:
     input: 
-        psl = "outputs/chains/{target}_{query}.psl",
+        psl = "outputs/chains/{target}_{query}_{aligner}.psl",
         target_fna = "inputs/{target}.fna",
         query_fna = "inputs/{query}.fna"
-    output: "outputs/chains/{target}_{query}.axtchain"
-    shell: ucscTools_location + "/axtChain -linearGap=loose -psl {input.psl} -faQ -faT {inputs.target_fna} {inputs.query_fna} {output}"
+    output: "outputs/chains/{target}_{query}_{aligner}.axtchain"
+    shell: ucscTools_location + "/axtChain -linearGap=loose -psl {input.psl} -faQ -faT {input.target_fna} {input.query_fna} {output}"
 
 rule chain_prenet: 
     input: 
         target_sizes = "outputs/chains/{target}_sizes.txt",
         query_sizes = "outputs/chains/{query}_sizes.txt",
-        axt_chain = "outputs/chains/{target}_{query}.axtchain"
-    output: "outputs/chains/{target}_{query}.preNet"
+        axt_chain = "outputs/chains/{target}_{query}_{aligner}.axtchain"
+    output: "outputs/chains/{target}_{query}_{aligner}.preNet"
     shell: ucscTools_location + "/chainPreNet {input.axt_chain} {input.target_sizes} {input.query_sizes} {output}"
 
 rule chain_net:
     input: 
         target_sizes = "outputs/chains/{target}_sizes.txt",
         query_sizes = "outputs/chains/{query}_sizes.txt",
-        prenet = "outputs/chains/{target}_{query}.preNet"
+        prenet = "outputs/chains/{target}_{query}_{aligner}.preNet"
     output:
-        ref_target = "outputs/chains/{target}_{query}_refTarget.chainNet",
-        species_target = "outputs/chains/{target}_{query}_speciesTarget.chainNet"
+        ref_target = "outputs/chains/{target}_{query}_{aligner}_refTarget.chainNet",
+        species_target = "outputs/chains/{target}_{query}_{aligner}_speciesTarget.chainNet"
     shell: ucscTools_location + "/chainNet {input.prenet} {input.target_sizes} {input.query_sizes} {output.ref_target} {output.species_target}"
 
 rule final_chain:
     input:
-        ref_target =  "outputs/chains/{target}_{query}_refTarget.chainNet",
-        prenet = "outputs/chains/{target}_{query}.preNet"
-    output: "outputs/chains/{target}_{query}.chain"
+        ref_target =  "outputs/chains/{target}_{query}_{aligner}_refTarget.chainNet",
+        prenet = "outputs/chains/{target}_{query}_{aligner}.preNet"
+    output: "outputs/chains/{target}_{query}_{aligner}.chain"
     shell: ucscTools_location + "/netChainSubset {input.ref_target} {input.prenet} {output}"
-'''
+
 
 #parses repeatmasker .out file to create a bed file
 rule repeatmasker_output_to_bed:
@@ -219,20 +272,20 @@ rule remove_last_6_cols_of_bed:
 #lift the repeats from the target genome to the query (requires a .chain file at the location target_query.chain in inputs
 rule lift_repeats:
     input:
-        chain = "outputs/chains/{target}_{query}.chain",
+        chain = "outputs/chains/{target}_{query}_{aligner}.chain",
         repeats = "outputs/f{filterdist}_{target}_e{bp}.bed"
     output: 
-        mapped = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}.bed",
-        unmapped = "outputs/unmapped_f{filterdist}_{target}_e{bp}_{query}.bed"
+        mapped = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed",
+        unmapped = "outputs/unmapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed"
     conda: "envs/pybedtools.yml"
     shell: ucscTools_location + "/liftOver {input.repeats} {input.chain} {output.mapped} {output.unmapped}"
 
 #gets a bed file of only the repeats that mapped over into query in the target (used by our parsing scripts)
 rule get_corresponding_unmapped_repeats:
     input:
-        mapped_repeats = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}.bed",
+        mapped_repeats = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed",
         target_repeats = "outputs/f{filterdist}_{target}_e{bp}.bed"
-    output: "outputs/orig_corresponding_to_mapped_f{filterdist}_{target}_e{bp}_{query}.bed"
+    output: "outputs/orig_corresponding_to_mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed"
     shell: "awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.mapped_repeats} {input.target_repeats} > {output}"
 
 #split the files into beds by family, note, we use gensub to replace any / in family names with % so we can use them as file names
@@ -241,18 +294,20 @@ rule get_corresponding_unmapped_repeats:
 # a) there are often 1000+ of them, so snakemake doing modification checking on them makes things slow
 # b) we don't know how many there will be (we could give snakemake an output directory but then we run into the issue mentioned in a)
 # so please don't mess with the query_beds/family.bed and target_beds/family.bed files or delete the alignments, target_fasta or query_fasta folders after running this step
+#gensub to replace all relevant special chars with % (was annoying to escape the regex but you could use regex instead of nesting)
+gensub_string = "gensub(\")\", \"%\", \"g\",gensub(\"(\", \"%\", \"g\", gensub(\"/\", \"%\", \"g\", $4)))"
 checkpoint split_file_by_families:
     input: 
-        mapped_repeats = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}.bed",
-        corresponding_repeats = "outputs/orig_corresponding_to_mapped_f{filterdist}_{target}_e{bp}_{query}.bed"
-    output: "outputs/f{filterdist}_{target}_e{bp}_{query}/family_summary.txt"
+        mapped_repeats = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed",
+        corresponding_repeats = "outputs/orig_corresponding_to_mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed"
+    output: "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/family_summary.txt"
     run:
-        location = "f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}"
+        location = "f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}_{wildcards.aligner}"
         shell("mkdir -p outputs/" + location)
         shell("mkdir -p outputs/" + location + "/query_beds")
         shell("mkdir -p outputs/" + location + "/target_beds")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\" gensub(/[/\\\\\\(\\)]/, \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/target_beds/\" gensub(/[/\\\\\\(\\)]/, \"%\", \"g\", $4) \".bed\")}}' {input.corresponding_repeats}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\""+ gensub_string + " \".bed\")}}' {input.mapped_repeats}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/target_beds/\"" + gensub_string + " \".bed\")}}' {input.corresponding_repeats}")
         shell("awk -F '[\\t;]' '{{print $4}}' {input.mapped_repeats} | sort | uniq -c > {output}")
         shell("mkdir -p outputs/" + location + "/alignments")
         shell("mkdir -p outputs/" + location+ "/target_fasta")
@@ -263,19 +318,19 @@ checkpoint split_file_by_families:
 #uses crossmatch (since it is singlethreaded which allows us to run many families at once) to align all instances of a family
 rule align_family:
     input: 
-        mapped_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}/query_beds/{family}.bed", 
-        target_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}/target_beds/{family}.bed",
+        mapped_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/query_beds/{family}.bed", 
+        target_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/target_beds/{family}.bed",
         target_genome = "inputs/{target}.fna",
         query_genome = "inputs/{query}.fna", 
         script = "scripts/align_family.py"
     output: 
-        query_fasta = "outputs/f{filterdist}_{target}_e{bp}_{query}/query_fasta/{family}.fasta",
-        target_fasta = "outputs/f{filterdist}_{target}_e{bp}_{query}/target_fasta/{family}.fasta",
-        summary = "outputs/f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/alignment_summary.txt",
-        caf = "outputs/f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/alignments.caf"
+        query_fasta = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/query_fasta/{family}.fasta",
+        target_fasta = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/target_fasta/{family}.fasta",
+        summary = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/alignments/{family}/alignment_summary.txt",
+        caf = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/alignments/{family}/alignments.caf"
     threads: 1
     conda: "envs/pybedtools.yml"
-    shell: """python {input.script} -i {input.target_bed} -m {input.mapped_bed} -t {input.target_genome} -q {input.query_genome} -o outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query} -f {wildcards.family}"""
+    shell: """python {input.script} -i {input.target_bed} -m {input.mapped_bed} -t {input.target_genome} -q {input.query_genome} -o outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}_{wildcard.aligner} -f {wildcards.family}"""
 
 #need to deal with parens in family names here 
 def aggregate_families(wildcards):
@@ -291,32 +346,32 @@ def aggregate_families(wildcards):
 rule align_all_families:
     input: 
         aggregate_families
-    output: "outputs/f{filterdist}_{target}_e{bp}_{query}/all_alignment_summary.txt"
-    shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/alignments/*/alignment_summary.txt > {output}"
+    output: "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/all_alignment_summary.txt"
+    shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}_{wildcards.aligner}/alignments/*/alignment_summary.txt > {output}"
 
 # splits the lifted/mapped beds by family for use by our .caf parser
 checkpoint target_interval_bed_per_family:
     input:
         target_bed = "outputs/f{filterdist}_{target}.bed",
-        query_bed = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}.bed"
+        query_bed = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed"
     output: 
-        all_target = "outputs/f{filterdist}_{target}_e{bp}_{query}/original_target_intervals_corresponding_to_expanded_and_mapped.bed",
+        all_target = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/original_target_intervals_corresponding_to_expanded_and_mapped.bed",
     run:
-        shell("mkdir -p outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/nonexpanded_target_beds")
+        shell("mkdir -p outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}_{wildcards.aligner}/nonexpanded_target_beds")
         shell("awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.query_bed} {input.target_bed} > {output.all_target}")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/nonexpanded_target_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {output.all_target}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.aligner}}/nonexpanded_target_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {output.all_target}")
 
 #parses in our file of all the alignments (lines with repeat name and alignments in CAF/yaCAF file format)
 #outputs a csv with the coverage information for each family
 rule parse_family_caf:
     input:
         script = "scripts/pared_down_parse_family_caf.py",
-        target_beds_done = "outputs/f{filterdist}_{target}_e{bp}_{query}/original_target_intervals_corresponding_to_expanded_and_mapped.bed",
-        family_target_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}/nonexpanded_target_beds/{family}.bed",
-        family_expanded_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}/target_beds/{family}.bed",
-        family_caf = "outputs/f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/alignments.caf"
+        target_beds_done = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/original_target_intervals_corresponding_to_expanded_and_mapped.bed",
+        family_target_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/nonexpanded_target_beds/{family}.bed",
+        family_expanded_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/target_beds/{family}.bed",
+        family_caf = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/alignments/{family}/alignments.caf"
     output:
-        family_table = "outputs/f{filterdist}_{target}_e{bp}_{query}/alignments/{family}/repeat_alignment_coverage.csv"
+        family_table = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/alignments/{family}/repeat_alignment_coverage.csv"
     conda: "envs/pybedtools.yml"
     shell: "python {input.script} -c {input.family_caf} -r {input.family_target_bed} -e {input.family_expanded_bed} -o {output}"
 
@@ -333,10 +388,10 @@ def aggregate_tsvs(wildcards):
 rule parse_all_caf: 
     input: 
         wc = aggregate_tsvs,
-        alignments_done = "outputs/f{filterdist}_{target}_e{bp}_{query}/all_alignment_summary.txt"
-    output: "outputs/f{filterdist}_{target}_e{bp}_{query}/num_csv_lines_summary.txt"
+        alignments_done = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/all_alignment_summary.txt"
+    output: "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/num_csv_lines_summary.txt"
     threads: 1
-    shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}/alignments/*/repeat_alignment_coverage.csv | wc -l > {output}"
+    shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}_{wildcards.aligner}/alignments/*/repeat_alignment_coverage.csv | wc -l > {output}"
 
 #awk command: awk -F';' 'previd==$3{count1 = split(prevline, prev,  " ", seps); count2 = split($0, curr, " ", seps2); prevline = curr[1] "\t" prev[2] "\t" (prev[3]<curr[3]?curr[3]:prev[3]) "\t" prev[4] "\t" prev[5] "\t" prev[6]} previd!=$3{print prevline; prevline = $0}{previd=$3} END{print prevline}' sorted.txt
 
