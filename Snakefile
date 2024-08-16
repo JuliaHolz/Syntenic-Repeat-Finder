@@ -355,7 +355,7 @@ checkpoint target_interval_bed_per_family:
         target_bed = "outputs/f{filterdist}_{target}.bed",
         query_bed = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed"
     output: 
-        all_target = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/original_target_intervals_corresponding_to_expanded_and_mapped.bed",
+        all_target = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/original_query_intervals_corresponding_to_expanded_and_mapped.bed",
     run:
         shell("mkdir -p outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}_{wildcards.aligner}/nonexpanded_target_beds")
         shell("awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.query_bed} {input.target_bed} > {output.all_target}")
@@ -366,7 +366,7 @@ checkpoint target_interval_bed_per_family:
 rule parse_family_caf:
     input:
         script = "scripts/pared_down_parse_family_caf.py",
-        target_beds_done = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/original_target_intervals_corresponding_to_expanded_and_mapped.bed",
+        target_beds_done = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/original_query_intervals_corresponding_to_expanded_and_mapped.bed",
         family_target_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/nonexpanded_target_beds/{family}.bed",
         family_expanded_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/target_beds/{family}.bed",
         family_caf = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/alignments/{family}/alignments.caf"
