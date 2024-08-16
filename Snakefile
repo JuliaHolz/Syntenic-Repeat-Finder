@@ -92,7 +92,10 @@ rule generate_chain_from_maf:
     output: "outputs/chains/{target}_{query}_anchorwave.chain"
     shell: maf_convert_location + " chain {input} > {output}"
 
-#these rules are for using FASTGA as our aligner
+#these rules are for using FASTGA as our aligner  
+#it currently does not work likely because the .psl file output by FASTGA is in a strange format
+#but if I were to go back and re-try this I might try using the .paf output format instead and finding a
+#.paf to .chain converter 
 rule make_tmp: 
     output: "outputs/FASTGAtmp/folder_made.txt"
     run: 
@@ -153,7 +156,7 @@ rule convert_to_psl:
     shell: maf_convert_location + " psl {input} > {output}"
 '''
 #these rules are the UCSC pipeline for generating a chain file, currently used for converting the FASTGA psl to a .chain file
-#but we could also use it to convert the .maf output by AnchorWave if we want a comparison on slightly more even footing
+#but we could also use it to convert the .maf output by AnchorWave if we wanted a comparison on slightly more even footing
 rule axt_chain:
     input: 
         psl = "outputs/chains/{target}_{query}_{aligner}.psl",
@@ -288,7 +291,7 @@ rule get_corresponding_unmapped_repeats:
     output: "outputs/orig_corresponding_to_mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed"
     shell: "awk -F'\\t' 'NR==FNR{{c[$4]++;next}};c[$4] > 0' {input.mapped_repeats} {input.target_repeats} > {output}"
 
-#split the files into beds by family, note, we use gensub to replace any / in family names with % so we can use them as file names
+#split the files into beds by family, note, we use gensub to replace any /, (, or ) in family names with % so we can use them as file names
 #this is a checkpoint because we don't know exactly what/how many families we will find in the bed ahead of time
 #this script has outputs of a bunch of repeat files for each family -- we don't include these in the outputs because:
 # a) there are often 1000+ of them, so snakemake doing modification checking on them makes things slow
@@ -306,14 +309,19 @@ checkpoint split_file_by_families:
         shell("mkdir -p outputs/" + location)
         shell("mkdir -p outputs/" + location + "/query_beds")
         shell("mkdir -p outputs/" + location + "/target_beds")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\""+ gensub_string + " \".bed\")}}' {input.mapped_repeats}")
-        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/target_beds/\"" + gensub_string + " \".bed\")}}' {input.corresponding_repeats}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\" "+ gensub_string + " \".bed\")}}' {input.mapped_repeats}")
+        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/target_beds/\" " + gensub_string + " \".bed\")}}' {input.corresponding_repeats}")
         shell("awk -F '[\\t;]' '{{print $4}}' {input.mapped_repeats} | sort | uniq -c > {output}")
         shell("mkdir -p outputs/" + location + "/alignments")
         shell("mkdir -p outputs/" + location+ "/target_fasta")
         shell("mkdir -p outputs/"+location+"/query_fasta")
 
-#        shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
+#the above gensub command, I did not have time to test it 
+#(since snakemake needed to re-do all the alignments first because I changed the file naming), 
+#if it's not working, below is the version that just substitutes slashes in the file names,
+# but you will need to figure out how to deal with parentheses in the file names (or manually replace them after this step)
+# shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
+# shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/target_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.corresponding_repeats}")
 
 #uses crossmatch (since it is singlethreaded which allows us to run many families at once) to align all instances of a family
 rule align_family:
@@ -393,8 +401,8 @@ rule parse_all_caf:
     threads: 1
     shell: "cat ./outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}_{wildcards.aligner}/alignments/*/repeat_alignment_coverage.csv | wc -l > {output}"
 
-#awk command: awk -F';' 'previd==$3{count1 = split(prevline, prev,  " ", seps); count2 = split($0, curr, " ", seps2); prevline = curr[1] "\t" prev[2] "\t" (prev[3]<curr[3]?curr[3]:prev[3]) "\t" prev[4] "\t" prev[5] "\t" prev[6]} previd!=$3{print prevline; prevline = $0}{previd=$3} END{print prevline}' sorted.txt
-
+#I was looking at merging repeats to deal with fragmentation here, but didn't finish implementing it
+'''
 rule sort_bed_RMid:
     input: "outputs/{genome}.bed"
     output: "outputs/idsorted_{genome}.bed"
@@ -405,4 +413,4 @@ rule merge_same_RMid:
     input: "outputs/idsorted_{genome}.bed"
     output: "outputs/merged_idsorted_{genome}.bed"
     shell: "awk -F';' 'previd==$3{{count1 = split(prevline, prev, \" \", seps); count2 = split($0, curr, \" \", seps2); prevline = curr[1] \"\\t\" prev[2] \"\\t\" (prev[3]<curr[3]?curr[3]:prev[3]) \"\\t\" prev[4] \"\\t\" prev[5] \"\\t\" prev[6]}} previd!=$3{{print prevline; prevline = $0}}{{previd=$3}} END{{print prevline}}'" + " {input} > {output}"
-
+'''
