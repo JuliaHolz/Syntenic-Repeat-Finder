@@ -1,0 +1,31 @@
+#some rules for aligning families to their consensus (and rerunning repeatmasker on a set of repeats)
+#can be useful for verifying the results of the pipeline
+wildcard_constraints:
+    family = "[^#]*",
+
+rule download_consensus:
+    input: 
+        script = "scripts/download_consensus.py"
+    output: "family_consensi/{family}.fasta"
+    conda: "envs/get_from_api.yml"
+    shell: "python {input.script} -f {wildcards.family}"
+
+rule align_family_to_consensus:
+    input:
+        consensus = "family_consensi/{family}.fasta",
+        repeats = "../outputs/{repeatfile}/query_fasta/{family}.fasta"
+    output: "alignments/{family}#{repeatfile}.aln"
+    shell: "/usr/local/RepeatModeler/util/align.pl -a {input.repeats} {input.consensus} > {output}"
+
+rule trim_fasta_ids:
+    input: 
+        fasta = "../outputs/{repeatfile}/query_fasta/{family}.fasta",
+        script = "scripts/trim_fasta.py"
+    output: "trimmed_fastas/{family}#{repeatfile}.fasta"
+    shell: "python {input.script} -f {input.fasta} -o {output}"
+
+#here we use the human library so families are searched against human repeats
+rule run_repeatmasker_on_family_fasta:
+     input: "trimmed_fastas/{family}#{repeatfile}.fasta"
+     output: "repeatmasker/{family}/{family}#{repeatfile}.fasta.out"
+     shell: "/usr/local/RepeatMasker-4.1.6-Dfam_3.8_RB/RepeatMasker  -engine rmblast -dir repeatmasker/{wildcards.family} -pa 36 -a -species human {input}"
