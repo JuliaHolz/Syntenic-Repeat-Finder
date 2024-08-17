@@ -7,6 +7,7 @@ import os
 #minimap
 #LAST (from which we use the maf-convert script)
 #AnchorWave 
+#FASTGA if applicable
 
 #inputs:
 #target fna: entire target genome, should be located in inputs/target.fna, where target is the name you want in file names relating to this genome (target name may not contain underscores)
@@ -35,7 +36,7 @@ minimap_location = "/home/jholz/minimap2/minimap2-2.28_x64-linux/minimap2"
 maf_convert_location = "/usr/local/last-1410/bin/maf-convert"
 #location of UCSC liftover
 ucscTools_location = "/usr/local/ucscTools"
-#location of FAST-GA if using
+#location of FAST-GA (if using)
 fastGA_location = "/home/jholz/FASTGA"
 
 #Generate CDS sequences from .gff file -- this takes some time
@@ -95,7 +96,7 @@ rule generate_chain_from_maf:
 #these rules are for using FASTGA as our aligner  
 #it currently does not work likely because the .psl file output by FASTGA is in a strange format
 #but if I were to go back and re-try this I might try using the .paf output format instead and finding a
-#.paf to .chain converter 
+#.paf to .chain converter (there are a couple git repositories online for this)
 rule make_tmp: 
     output: "outputs/FASTGAtmp/folder_made.txt"
     run: 
@@ -246,8 +247,8 @@ rule add_basepairs_on_both_sides:
     conda: "envs/pybedtools.yml"
     shell: "python {input.script} -b {wildcards.bp} -i {input.repeats} -g {input.genome} -o {output}"
 
-#removed these steps because we should be able to deal with repeats that are close to the edges in our coverage calculations
 #these steps combine the bed files side by side so we can filter out the ones that were too close to the start/end to slop outwards
+#I removed these steps because we should be able to deal with repeats that are close to the edges in our coverage calculations
 '''
 rule combine_beds:
     input:
@@ -297,8 +298,9 @@ rule get_corresponding_unmapped_repeats:
 # a) there are often 1000+ of them, so snakemake doing modification checking on them makes things slow
 # b) we don't know how many there will be (we could give snakemake an output directory but then we run into the issue mentioned in a)
 # so please don't mess with the query_beds/family.bed and target_beds/family.bed files or delete the alignments, target_fasta or query_fasta folders after running this step
-#gensub to replace all relevant special chars with % (was annoying to escape the regex but you could use regex instead of nesting)
-gensub_string = "gensub(\")\", \"%\", \"g\",gensub(\"(\", \"%\", \"g\", gensub(\"/\", \"%\", \"g\", $4)))"
+
+#gensub used to replace all special chars with % (it was annoying to escape the regex but you could use regex instead of nesting 3 gensubs)
+gensub_string = "gensub(\"\\\\)\", \"%\", \"g\",gensub(\"\\\\(\", \"%\", \"g\", gensub(\"/\", \"%\", \"g\", $4)))"
 checkpoint split_file_by_families:
     input: 
         mapped_repeats = "outputs/mapped_f{filterdist}_{target}_e{bp}_{query}_{aligner}.bed",
@@ -316,14 +318,8 @@ checkpoint split_file_by_families:
         shell("mkdir -p outputs/" + location+ "/target_fasta")
         shell("mkdir -p outputs/"+location+"/query_fasta")
 
-#the above gensub command, I did not have time to test it, so if this step errors, it's probably that
-#(since snakemake needed to re-do all the alignments first because I changed the file naming), 
-#if it's not working, below is the version of those two shell commands that just substitutes slashes in the file names,
-# but you will need to figure out how to deal with parentheses in the file names (or manually replace them after this step)
-# shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/query_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.mapped_repeats}")
-# shell("awk -F'[;\\t]' '{{print>(\"outputs/" + location + "/target_beds/\" gensub(\"/\", \"%\", \"g\", $4) \".bed\")}}' {input.corresponding_repeats}")
-
 #uses crossmatch (since it is singlethreaded which allows us to run many families at once) to align all instances of a family
+#it may be faster to use RMBlast or another aligner and give the rule more threads
 rule align_family:
     input: 
         mapped_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/query_beds/{family}.bed", 
@@ -340,7 +336,6 @@ rule align_family:
     conda: "envs/pybedtools.yml"
     shell: """python {input.script} -i {input.target_bed} -m {input.mapped_bed} -t {input.target_genome} -q {input.query_genome} -o outputs/f{wildcards.filterdist}_{wildcards.target}_e{wildcards.bp}_{wildcards.query}_{wildcard.aligner} -f {wildcards.family}"""
 
-#need to deal with parens in family names here 
 def aggregate_families(wildcards):
      #asking for checkpoint output forces the checkpoint job split_file_by_families to run before this
      checkpoint_output = checkpoints.split_file_by_families.get(**wildcards).output[0]
@@ -373,7 +368,7 @@ checkpoint target_interval_bed_per_family:
 #outputs a csv with the coverage information for each family
 rule parse_family_caf:
     input:
-        script = "scripts/pared_down_parse_family_caf.py",
+        script = "scripts/parse_family_caf.py",
         target_beds_done = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/original_query_intervals_corresponding_to_expanded_and_mapped.bed",
         family_target_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/nonexpanded_target_beds/{family}.bed",
         family_expanded_bed = "outputs/f{filterdist}_{target}_e{bp}_{query}_{aligner}/target_beds/{family}.bed",
